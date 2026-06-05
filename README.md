@@ -1,6 +1,6 @@
-# 《织》— Type Help 风格解谜游戏原型
+# murderthathuman
 
-一款受 [Type Help](https://william-rous.itch.io/type-help) 启发的**文字侦探解谜游戏**原型，探讨人工智能与人类之间的情感关系。
+一款关于人类、人工智能与仿生机器人关系的**文字侦探解谜游戏**原型。
 
 玩家进入一个受损的 AI 操作系统界面，通过搜索日志、推理文件名来还原一桩发生在山中宅邸"归墟苑"的集体死亡案件。
 
@@ -19,7 +19,7 @@
 
 ```bash
 # Python（大多数系统自带）
-cd type-help-prototype
+cd murderthathuman
 python -m http.server 8123
 
 # 或者用 Node.js
@@ -30,10 +30,10 @@ npx serve .
 
 ## 项目结构
 
-```
-type-help-prototype/
+```text
+murderthathuman/
 ├── index.html          # 游戏主页面
-├── styles.css          # 哥特暗色终端风格
+├── styles.css          # 暗色系统界面风格
 ├── data.js             # 案件数据（人物、地点、文件链、结局）
 ├── art.js              # 每个地点的内嵌 SVG 场景图
 ├── game.js             # 游戏引擎（命令解析、文件解锁、UI）
