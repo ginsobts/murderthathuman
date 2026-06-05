@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>加利庄园 · 晚宴疑案</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 左侧：终端 -->
+    <section id="terminal-pane">
+      <header class="pane-head">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="head-title">CASEFILE.EXE — 加利庄园</span>
+      </header>
+      <div id="output" aria-live="polite"></div>
+      <form id="prompt-form" autocomplete="off">
+        <span class="caret">&gt;</span>
+        <input id="prompt-input" type="text" placeholder="输入文件名或命令（试试 help）" autofocus />
+      </form>
+    </section>
+
+    <!-- 右侧：图片面板 + 侧栏 -->
+    <aside id="side-pane">
+      <div id="image-panel">
+        <div id="scene-art"><!-- SVG 注入 --></div>
+        <div id="scene-caption">尚未打开任何文件</div>
+      </div>
+
+      <div class="side-block">
+        <h3>已解锁文件 <span id="file-count">(1)</span></h3>
+        <ul id="file-list"></ul>
+      </div>
+
+      <div class="side-block">
+        <h3>人物（可用 name 标注）</h3>
+        <ul id="people-list"></ul>
+      </div>
+    </aside>
+  </div>
+
+  <script src="data.js"></script>
+  <script src="art.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>交互能力演示 · 推箱子</title>
+<style>
+  :root { --gold:#c8a96a; --ink:#d8d2c2; --dim:#6f6a5c; }
+  html,body{margin:0;height:100%;background:#0a0a0c;color:var(--ink);
+    font-family:Consolas,Menlo,monospace;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:14px;}
+  h1{font-size:16px;color:var(--gold);margin:0;letter-spacing:.5px;}
+  p{margin:0;color:var(--dim);font-size:13px;text-align:center;line-height:1.6;}
+  canvas{border:1px solid #23222a;border-radius:10px;background:#101015;
+    box-shadow:0 8px 40px rgba(0,0,0,.5);touch-action:none;}
+  #msg{height:20px;color:#8fcf8f;font-size:14px;font-weight:600;}
+  .keys{color:var(--gold);}
+  button{background:#16161c;color:var(--ink);border:1px solid #2a2a33;
+    border-radius:6px;padding:6px 14px;font-family:inherit;cursor:pointer;}
+  button:hover{border-color:var(--gold);}
+</style>
+</head>
+<body>
+  <h1>网页交互能力演示 —— 推箱子(Sokoban)</h1>
+  <p>用 <span class="keys">方向键 / WASD</span> 移动小人，把 3 个箱子推到金色目标点上。<br/>
+     这就是"操作小人移动 + 推动物体"——纯 HTML/CSS/JS，无需任何引擎。</p>
+  <canvas id="c" width="448" height="448"></canvas>
+  <div id="msg"></div>
+  <button id="reset">重新开始 (R)</button>
+
+<script>
+(function(){
+  "use strict";
+  // 地图： # 墙  . 目标  $ 箱子  @ 小人  (空格=地板)
+  const LEVEL = [
+    "########",
+    "#  .   #",
+    "# $$ . #",
+    "#  @   #",
+    "# .$   #",
+    "#    # #",
+    "#      #",
+    "########",
+  ];
+  const TILE = 56;
+  const cvs = document.getElementById("c");
+  const ctx = cvs.getContext("2d");
+  const msg = document.getElementById("msg");
+
+  let walls, targets, boxes, player;
+
+  function load(){
+    walls = new Set(); targets = new Set(); boxes = new Set(); player = null;
+    for(let y=0;y<LEVEL.length;y++){
+      for(let x=0;x<LEVEL[y].length;x++){
+        const ch = LEVEL[y][x], k = x+","+y;
+        if(ch==="#") walls.add(k);
+        else if(ch===".") targets.add(k);
+        else if(ch==="$") boxes.add(k);
+        else if(ch==="@") player = {x,y};
+      }
+    }
+    msg.textContent = "";
+    draw();
+  }
+
+  function key(x,y){ return x+","+y; }
+
+  function move(dx,dy){
+    if(!player) return;
+    const nx=player.x+dx, ny=player.y+dy, nk=key(nx,ny);
+    if(walls.has(nk)) return;                 // 撞墙
+    if(boxes.has(nk)){                         // 前方是箱子
+      const bx=nx+dx, by=ny+dy, bk=key(bx,by);
+      if(walls.has(bk) || boxes.has(bk)) return; // 箱子后面被挡，推不动
+      boxes.delete(nk); boxes.add(bk);         // 推动箱子
+    }
+    player.x=nx; player.y=ny;
+    draw();
+    checkWin();
+  }
+
+  function checkWin(){
+    let done = true;
+    targets.forEach(t=>{ if(!boxes.has(t)) done=false; });
+    if(done && targets.size>0){
+      msg.textContent = "★ 通关！所有箱子都到位了。";
+    }
+  }
+
+  function roundRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r);
+    ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r);
+    ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,cvs.width,cvs.height);
+    for(let y=0;y<LEVEL.length;y++){
+      for(let x=0;x<LEVEL[y].length;x++){
+        const px=x*TILE, py=y*TILE, k=key(x,y);
+        // 地板
+        ctx.fillStyle = "#14141a"; ctx.fillRect(px,py,TILE,TILE);
+        ctx.strokeStyle = "#1d1d24"; ctx.strokeRect(px,py,TILE,TILE);
+        if(walls.has(k)){
+          ctx.fillStyle = "#33323a"; roundRect(px+3,py+3,TILE-6,TILE-6,6); ctx.fill();
+        }
+        if(targets.has(k)){
+          ctx.strokeStyle = "#c8a96a"; ctx.lineWidth=2;
+          ctx.beginPath(); ctx.arc(px+TILE/2,py+TILE/2,9,0,Math.PI*2); ctx.stroke();
+          ctx.lineWidth=1;
+        }
+      }
+    }
+    // 箱子
+    boxes.forEach(b=>{
+      const [x,y]=b.split(",").map(Number);
+      const onTarget = targets.has(b);
+      ctx.fillStyle = onTarget ? "#8a6f30" : "#6b5a36";
+      roundRect(x*TILE+8,y*TILE+8,TILE-16,TILE-16,5); ctx.fill();
+      ctx.strokeStyle = onTarget ? "#ffd27a" : "#c8a96a"; ctx.lineWidth=2;
+      roundRect(x*TILE+8,y*TILE+8,TILE-16,TILE-16,5); ctx.stroke();
+      ctx.lineWidth=1;
+    });
+    // 小人
+    if(player){
+      const cx=player.x*TILE+TILE/2, cy=player.y*TILE+TILE/2;
+      ctx.fillStyle = "#ff8a3a";
+      ctx.beginPath(); ctx.arc(cx,cy-6,8,0,Math.PI*2); ctx.fill();      // 头
+      ctx.fillRect(cx-7,cy+2,14,16);                                    // 身体
+    }
+  }
+
+  window.addEventListener("keydown",(e)=>{
+    const k=e.key.toLowerCase();
+    if(["arrowup","w"].includes(k)){ move(0,-1); e.preventDefault(); }
+    else if(["arrowdown","s"].includes(k)){ move(0,1); e.preventDefault(); }
+    else if(["arrowleft","a"].includes(k)){ move(-1,0); e.preventDefault(); }
+    else if(["arrowright","d"].includes(k)){ move(1,0); e.preventDefault(); }
+    else if(k==="r"){ load(); }
+  });
+  document.getElementById("reset").addEventListener("click",load);
+
+  load();
+})();
+</script>
+</body>
+</html>
