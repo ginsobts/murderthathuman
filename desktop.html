@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>织 · 家庭操作系统</title>
+  <link rel="stylesheet" href="desktop.css" />
+</head>
+<body>
+  <!-- 桌面：图标会由 desktop.js 根据 desktop-data.js 自动生成 -->
+  <div id="desktop">
+    <div id="icon-layer"></div>
+
+    <!-- 右上角工具栏：编辑模式入口 -->
+    <div id="toolbar">
+      <div id="edit-only">
+        <span id="draft-status"></span>
+        <span id="add-target"></span>
+        <button class="tool-btn" id="btn-add-txt">＋文本</button>
+        <button class="tool-btn" id="btn-add-img">＋图片</button>
+        <button class="tool-btn" id="btn-add-folder">＋文件夹</button>
+        <button class="tool-btn" id="btn-export">导出配置</button>
+        <button class="tool-btn" id="btn-reset" title="清空草稿，回到 desktop-data.js 文件版本">恢复文件版本</button>
+      </div>
+      <button class="tool-btn" id="btn-edit">✏️ 编辑模式</button>
+    </div>
+
+    <!-- 右侧属性检查器（编辑模式选中后出现） -->
+    <div id="inspector"></div>
+
+    <!-- 左下角系统信息 -->
+    <div id="system-tag">
+      <div id="system-name"></div>
+      <div id="boot-line"></div>
+    </div>
+  </div>
+
+  <!-- 配置在前，引擎在后 -->
+  <script src="desktop-data.js"></script>
+  <script src="desktop.js"></script>
+</body>
+</html>
