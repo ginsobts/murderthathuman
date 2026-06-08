@@ -170,6 +170,10 @@ body.edit-mode #icon-layer > .icon:active { cursor: grabbing; }
   color: var(--text);
   user-select: text;
 }
+.txt-body .speaker {
+  color: #7fc3ff;
+  font-weight: 600;
+}
 
 /* 图片内容 */
 .img-body { text-align: center; }
@@ -238,6 +242,76 @@ body.edit-mode #icon-layer > .icon:active { cursor: grabbing; }
   color: #d98a8a;
 }
 
+/* ===== 排序锁 ===== */
+.order-lock .hint { line-height: 1.6; }
+.order-lock .order-list { text-align: left; margin: 6px 0 2px; }
+.order-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  margin: 6px 0;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.order-row .order-rank { color: var(--accent); font-weight: bold; flex: none; width: 18px; }
+.order-row .order-label { flex: 1; font-size: 13px; color: var(--text); }
+.order-row .order-arrows { display: flex; gap: 4px; flex: none; }
+.order-arrow {
+  width: 24px;
+  height: 22px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+}
+.order-arrow:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.order-arrow:disabled { opacity: 0.3; cursor: default; }
+
+/* ===== 认人锁 ===== */
+.choice-lock .hint { line-height: 1.6; }
+.choice-opt {
+  display: block;
+  width: 80%;
+  margin: 8px auto 0;
+  padding: 9px 10px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.choice-opt:hover { border-color: var(--accent); background: rgba(255,255,255,0.03); }
+
+/* 档案锁：代号 + 声纹下拉 */
+.dossier-row .dossier-code {
+  flex: none;
+  min-width: 78px;
+  font-family: monospace;
+  letter-spacing: 0.5px;
+  color: #7fc3ff;
+  font-weight: 600;
+}
+.dossier-select {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.dossier-select:focus { outline: none; border-color: var(--accent); }
+
 /* ===== 人物备注程序 ===== */
 .notes-app { display: flex; flex-direction: column; }
 .notes-intro {
@@ -253,9 +327,27 @@ body.edit-mode #icon-layer > .icon:active { cursor: grabbing; }
   padding: 9px 0;
   border-bottom: 1px solid var(--line);
 }
-.notes-code { flex: 0 0 118px; }
+.notes-code { flex: 0 0 96px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
 .notes-code .code { font-size: 13px; color: var(--accent); font-weight: bold; }
-.notes-code .code-hint { font-size: 10.5px; color: var(--text-dim); margin-top: 2px; line-height: 1.35; }
+.notes-code .code-caret { font-size: 10px; color: var(--text-dim); }
+.notes-code .code-caret::before { content: "▸"; }
+.notes-row.expanded .code-caret::before { content: "▾"; }
+.notes-code:hover .code { text-decoration: underline; }
+
+.notes-dialogs { padding: 2px 0 8px 6px; border-bottom: 1px solid var(--line); }
+.notes-dialogs-count { font-size: 11px; color: var(--text-dim); margin: 4px 0 6px; }
+.notes-dialog-item {
+  padding: 6px 8px;
+  margin: 4px 0;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--bg-0);
+  transition: border-color 0.12s, background 0.12s;
+}
+.notes-dialog-item:hover { border-color: var(--accent); background: rgba(255,255,255,0.03); }
+.notes-dialog-item .ndi-title { font-size: 12px; color: var(--text); }
+.notes-dialog-item .ndi-sub { font-size: 10.5px; color: var(--text-dim); margin-top: 2px; }
 .notes-row input {
   flex: 1;
   background: var(--bg-0);

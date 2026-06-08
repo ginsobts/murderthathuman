@@ -43,6 +43,54 @@
     return out;
   }
 
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  // 密码比对前的归一化：去掉空格与常见标点，让“别把我留下来。”这类口令更宽容。
+  function normPass(s) {
+    return String(s == null ? "" : s)
+      .trim()
+      .toUpperCase()
+      .replace(/[\s，。、！？,.!?；;：:'"‘’“”「」『』（）()【】\[\]\-—_~·]/g, "");
+  }
+
+  // 行首是某个声纹代号 + “：” 时，把说话人名字（含冒号）标成浅蓝色。
+  // 只认花名册里的代号，避免把“自动输液剂量校验：”这种设备读数也染色。
+  function speakerRegex() {
+    const codes = (DESKTOP.roster || [])
+      .map((r) => r && r.code)
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length)
+      .map(escapeRe);
+    if (!codes.length) return null;
+    return new RegExp("^(\\s*)(" + codes.join("|") + ")：([\\s\\S]*)$");
+  }
+
+  function renderTxt(div, raw) {
+    const re = speakerRegex();
+    const html = String(raw == null ? "" : raw)
+      .split("\n")
+      .map((line) => {
+        const m = re && line.match(re);
+        if (m) {
+          return (
+            escapeHtml(m[1]) +
+            '<span class="speaker">' +
+            escapeHtml(applyAnnotations(m[2])) +
+            "：</span>" +
+            escapeHtml(applyAnnotations(m[3]))
+          );
+        }
+        return escapeHtml(applyAnnotations(line));
+      })
+      .join("\n");
+    div.innerHTML = html;
+  }
+
   // ---- 玩家给日志改名（标记推断出的时间/含义）----
   const FILENAME_KEY = "weave_os_filenames_v1";
   let playerNames = {}; // __id -> 玩家起的名字
@@ -55,6 +103,25 @@
   function displayName(node) {
     const p = playerNames[node.__id];
     return (p != null && p !== "") ? p : (node.name || "(未命名)");
+  }
+
+  // ---- 记录玩家“看过”了哪些记录（用于按角色检索对话）----
+  const VIEWED_KEY = "weave_os_viewed_v1";
+  const nodeById = {};          // __id -> node（reindex 时填充）
+  const nodeBySlot = {};        // slot -> node（用于逐层揭示）
+  let viewed = {};              // __id -> true（看过的记录）
+  function loadViewed() {
+    try { const r = localStorage.getItem(VIEWED_KEY); if (r) viewed = JSON.parse(r) || {}; } catch (e) {}
+  }
+  function saveViewed() {
+    try { localStorage.setItem(VIEWED_KEY, JSON.stringify(viewed)); } catch (e) {}
+  }
+  function markViewed(node) {
+    if (viewed[node.__id]) return;
+    viewed[node.__id] = true;
+    saveViewed();
+    renderDesktop();          // 可能有新一层记录该出现了
+    refreshOpenFolders();
   }
 
   const desktop = document.getElementById("desktop");
@@ -143,12 +210,22 @@
   function reindex(items) {
     items.forEach((node) => {
       if (node.__id == null) node.__id = "n" + idSeq++;
+      nodeById[node.__id] = node;
+      if (node.slot) nodeBySlot[node.slot] = node;
       node.__parentArray = items;
       if (node.type === "folder") {
         node.children = node.children || [];
         reindex(node.children);
       }
     });
+  }
+
+  // 逐层揭示：带 hiddenUntil 的节点，要等到对应 slot 的记录被“看过”才出现
+  function isHidden(node) {
+    if (editMode) return false;            // 编辑模式下全部可见，方便作者改
+    if (!node.hiddenUntil) return false;
+    const pre = nodeBySlot[node.hiddenUntil];
+    return !(pre && viewed[pre.__id]);
   }
 
   // ---- 系统信息 ----
@@ -162,6 +239,7 @@
     iconLayer.innerHTML = "";
     let autoIndex = 0;
     DESKTOP.items.forEach((node) => {
+      if (isHidden(node)) return;          // 还没解锁到这一层，先不显示
       // 没有坐标的，自动排成一列一列的网格
       if (typeof node.x !== "number" || typeof node.y !== "number") {
         const col = Math.floor(autoIndex / 6);
@@ -260,6 +338,8 @@
 
     if (node.type === "notes") { openNotesApp(node); return; }
 
+    if (node.type === "txt" || node.type === "img") markViewed(node);
+
     let body;
     if (node.type === "txt") body = buildTxtBody(node);
     else if (node.type === "img") body = buildImgBody(node);
@@ -275,7 +355,7 @@
   function buildTxtBody(node) {
     const div = document.createElement("div");
     div.className = "txt-body";
-    div.textContent = applyAnnotations(rawText(node));
+    renderTxt(div, rawText(node));
     return div;
   }
 
@@ -312,13 +392,32 @@
       empty.textContent = "（空文件夹）";
       div.appendChild(empty);
     } else {
-      children.forEach((child) => div.appendChild(makeIcon(child, false)));
+      children.forEach((child) => { if (!isHidden(child)) div.appendChild(makeIcon(child, false)); });
     }
   }
 
   /* ===================================================================
    *  人物备注程序
    * =================================================================== */
+  function firstHeaderLine(node) {
+    const lines = Array.isArray(node.content) ? node.content : String(node.content || "").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i] && lines[i].trim()) return lines[i].trim();
+    }
+    return "";
+  }
+
+  // 玩家“看过的、且出现了某代号”的对话记录
+  function viewedRecordsWith(code) {
+    const out = [];
+    Object.keys(viewed).forEach((id) => {
+      const n = nodeById[id];
+      if (!n || n.type !== "txt") return;
+      if (rawText(n).indexOf(code) !== -1) out.push(n);
+    });
+    return out;
+  }
+
   function openNotesApp(node) {
     const wrap = document.createElement("div");
     wrap.className = "notes-app";
@@ -326,7 +425,7 @@
     const intro = document.createElement("div");
     intro.className = "notes-intro";
     intro.textContent = node.appIntro ||
-      "为每个代号写下你推断出的真名。填写后，所有录音文本里的代号会自动显示成这个名字。";
+      "为每个声纹写下你推断出的真名（会自动替换全文）。点声纹编号，可查看你看过的、ta 参与过的对话。";
     wrap.appendChild(intro);
 
     const roster = DESKTOP.roster || [];
@@ -339,25 +438,66 @@
       const codeEl = document.createElement("div");
       codeEl.className = "code";
       codeEl.textContent = r.code;
-      const hintEl = document.createElement("div");
-      hintEl.className = "code-hint";
-      hintEl.textContent = r.hint || "";
+      const caret = document.createElement("span");
+      caret.className = "code-caret";
       left.appendChild(codeEl);
-      left.appendChild(hintEl);
+      left.appendChild(caret);
 
       const inp = document.createElement("input");
       inp.type = "text";
       inp.placeholder = "写下真名…";
       inp.value = annotations[r.code] || "";
+
+      const list = document.createElement("div");
+      list.className = "notes-dialogs";
+      list.style.display = "none";
+
+      function renderDialogList() {
+        list.innerHTML = "";
+        const recs = viewedRecordsWith(r.code);
+        const count = document.createElement("div");
+        count.className = "notes-dialogs-count";
+        count.textContent = recs.length
+          ? "你看过的、ta 参与过的对话（" + recs.length + "）"
+          : "你还没看过 ta 参与的任何对话。";
+        list.appendChild(count);
+        recs.forEach((n) => {
+          const item = document.createElement("div");
+          item.className = "notes-dialog-item";
+          const t = document.createElement("div");
+          t.className = "ndi-title";
+          t.textContent = displayName(n);
+          const s = document.createElement("div");
+          s.className = "ndi-sub";
+          s.textContent = firstHeaderLine(n);
+          item.appendChild(t);
+          item.appendChild(s);
+          item.addEventListener("click", () => openItem(n));
+          list.appendChild(item);
+        });
+      }
+
       inp.addEventListener("input", () => {
         annotations[r.code] = inp.value;
         saveNotes();
         refreshAnnotated();
+        if (list.style.display !== "none") renderDialogList();
       });
+
+      let open = false;
+      function toggle() {
+        open = !open;
+        row.classList.toggle("expanded", open);
+        list.style.display = open ? "block" : "none";
+        if (open) renderDialogList();
+      }
+      codeEl.addEventListener("click", toggle);
+      caret.addEventListener("click", toggle);
 
       row.appendChild(left);
       row.appendChild(inp);
       wrap.appendChild(row);
+      wrap.appendChild(list);
     });
 
     createWindow(node, wrap, { notes: true });
@@ -371,11 +511,15 @@
       if (!n) return;
       if (n.type === "txt") {
         const b = rec.win.querySelector(".txt-body");
-        if (b) b.textContent = applyAnnotations(rawText(n));
+        if (b) renderTxt(b, rawText(n));
       } else if (n.type === "img" && n.caption) {
         const c = rec.win.querySelector(".caption");
         if (c) c.textContent = applyAnnotations(n.caption);
       }
+      // 锁对话框里标了 data-anno 的元素（排序标签 / 认人按钮 / 档案锁下拉项）也跟着改名
+      rec.win.querySelectorAll("[data-anno]").forEach((el) => {
+        el.textContent = applyAnnotations(el.dataset.anno);
+      });
     });
   }
 
@@ -383,12 +527,16 @@
    *  上锁密码框
    * =================================================================== */
   function openLockDialog(node) {
+    if (node.lockType === "order") { openOrderLock(node); return; }
+    if (node.lockType === "choice") { openChoiceLock(node); return; }
+    if (node.lockType === "dossier") { openDossierLock(node); return; }
+
     const wrap = document.createElement("div");
     wrap.className = "lock-body";
     wrap.innerHTML =
       '<div class="lock-icon">🔒</div>' +
       '<div class="hint"></div>';
-    wrap.querySelector(".hint").textContent = "此文件已加密。请输入密码。";
+    wrap.querySelector(".hint").textContent = node.lockPrompt || "此文件已加密。请输入密码。";
 
     const inp = document.createElement("input");
     inp.type = "text";
@@ -408,12 +556,8 @@
     setTimeout(() => inp.focus(), 30);
 
     function tryUnlock() {
-      if (String(inp.value).trim() === String(node.password)) {
-        unlocked[node.__id] = true;
-        if (node.__iconEl) node.__iconEl.classList.add("unlocked");
-        win.remove();
-        delete openWindows[node.__id];
-        openItem(node);
+      if (normPass(inp.value) === normPass(node.password)) {
+        doUnlock(node, win);
       } else {
         err.textContent = "密码错误。";
         inp.select();
@@ -421,6 +565,244 @@
     }
     btn.addEventListener("click", tryUnlock);
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") tryUnlock(); });
+  }
+
+  function doUnlock(node, win) {
+    unlocked[node.__id] = true;
+    if (node.__iconEl) node.__iconEl.classList.add("unlocked");
+    win.remove();
+    delete openWindows[node.__id];
+    openItem(node);
+  }
+
+  /* ===== 排序锁：把若干人/物按正确顺序排好才能解锁 ===== */
+  function openOrderLock(node) {
+    const wrap = document.createElement("div");
+    wrap.className = "lock-body order-lock";
+
+    const icon = document.createElement("div");
+    icon.className = "lock-icon";
+    icon.textContent = "🔒";
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = node.orderPrompt || "把下面的项目按正确顺序排好。";
+    wrap.appendChild(icon);
+    wrap.appendChild(hint);
+
+    // 当前顺序（用代号数组表示），初始用作者给的 orderItems
+    let current = (node.orderItems || []).slice();
+
+    const listEl = document.createElement("div");
+    listEl.className = "order-list";
+    wrap.appendChild(listEl);
+
+    function render() {
+      listEl.innerHTML = "";
+      current.forEach((code, i) => {
+        const row = document.createElement("div");
+        row.className = "order-row";
+
+        const rank = document.createElement("span");
+        rank.className = "order-rank";
+        rank.textContent = (i + 1) + ".";
+
+        const label = document.createElement("span");
+        label.className = "order-label";
+        label.dataset.anno = code;
+        label.textContent = applyAnnotations(code);
+
+        const ups = document.createElement("div");
+        ups.className = "order-arrows";
+        const up = document.createElement("button");
+        up.className = "order-arrow";
+        up.textContent = "▲";
+        up.disabled = i === 0;
+        up.addEventListener("click", () => { swap(i, i - 1); });
+        const down = document.createElement("button");
+        down.className = "order-arrow";
+        down.textContent = "▼";
+        down.disabled = i === current.length - 1;
+        down.addEventListener("click", () => { swap(i, i + 1); });
+        ups.appendChild(up);
+        ups.appendChild(down);
+
+        row.appendChild(rank);
+        row.appendChild(label);
+        row.appendChild(ups);
+        listEl.appendChild(row);
+      });
+    }
+    function swap(a, b) {
+      const t = current[a]; current[a] = current[b]; current[b] = t;
+      err.textContent = "";
+      render();
+    }
+    render();
+
+    const btn = document.createElement("button");
+    btn.className = "lock-btn";
+    btn.textContent = "确认顺序";
+    const err = document.createElement("div");
+    err.className = "lock-error";
+    wrap.appendChild(btn);
+    wrap.appendChild(err);
+
+    const win = createWindow(node, wrap, { lockDialog: true });
+
+    btn.addEventListener("click", () => {
+      const ans = node.orderAnswer || [];
+      const ok = current.length === ans.length &&
+        current.every((c, i) => c === ans[i]);
+      if (ok) doUnlock(node, win);
+      else { err.textContent = "顺序不对。再想想 ta 是怎么看这些人的。"; }
+    });
+  }
+
+  /* ===== 认人锁：从若干声纹里选出正确的那个 ===== */
+  function openChoiceLock(node) {
+    const wrap = document.createElement("div");
+    wrap.className = "lock-body choice-lock";
+
+    const icon = document.createElement("div");
+    icon.className = "lock-icon";
+    icon.textContent = "🔒";
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = node.choicePrompt || "选出正确的那一个。";
+    wrap.appendChild(icon);
+    wrap.appendChild(hint);
+
+    const err = document.createElement("div");
+    err.className = "lock-error";
+
+    (node.choiceOptions || []).forEach((code) => {
+      const b = document.createElement("button");
+      b.className = "choice-opt";
+      b.dataset.anno = code;
+      b.textContent = applyAnnotations(code);
+      b.addEventListener("click", () => {
+        if (code === node.choiceAnswer) doUnlock(node, win);
+        else { err.textContent = "不是 ta。再想想，现场留下的是谁。"; }
+      });
+      wrap.appendChild(b);
+    });
+
+    wrap.appendChild(err);
+    const win = createWindow(node, wrap, { lockDialog: true });
+  }
+
+  /* ===== 档案锁：给每个仿生体代号配上声纹，并按制造先后排序 ===== */
+  function openDossierLock(node) {
+    const wrap = document.createElement("div");
+    wrap.className = "lock-body order-lock dossier-lock";
+
+    const icon = document.createElement("div");
+    icon.className = "lock-icon";
+    icon.textContent = "🔒";
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = node.dossierPrompt || "把每个代号对上声纹，并按制造先后排好。";
+    wrap.appendChild(icon);
+    wrap.appendChild(hint);
+
+    const ans = node.dossierAnswer || [];
+    const voiceOpts = node.dossierVoiceOptions ||
+      (DESKTOP.roster || []).map((r) => r && r.code).filter(Boolean);
+
+    // 初始：代号顺序打乱（避免一开始就摆成答案）
+    let codes = ans.map((a) => a.code);
+    if (codes.length > 1) {
+      for (let i = codes.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = codes[i]; codes[i] = codes[j]; codes[j] = t;
+      }
+      const sameAsAnswer = codes.every((c, i) => c === ans[i].code);
+      if (sameAsAnswer) codes.reverse();
+    }
+    const chosen = {}; // code -> 选中的声纹
+
+    const listEl = document.createElement("div");
+    listEl.className = "order-list";
+    wrap.appendChild(listEl);
+
+    function render() {
+      listEl.innerHTML = "";
+      codes.forEach((code, i) => {
+        const row = document.createElement("div");
+        row.className = "order-row dossier-row";
+
+        const rank = document.createElement("span");
+        rank.className = "order-rank";
+        rank.textContent = (i + 1) + ".";
+
+        const label = document.createElement("span");
+        label.className = "order-label dossier-code";
+        label.textContent = code;
+
+        const sel = document.createElement("select");
+        sel.className = "dossier-select";
+        const ph = document.createElement("option");
+        ph.value = ""; ph.textContent = "选声纹…";
+        sel.appendChild(ph);
+        voiceOpts.forEach((v) => {
+          const o = document.createElement("option");
+          o.value = v;
+          o.dataset.anno = v;
+          o.textContent = applyAnnotations(v);
+          sel.appendChild(o);
+        });
+        sel.value = chosen[code] || "";
+        sel.addEventListener("change", () => { chosen[code] = sel.value; err.textContent = ""; });
+
+        const ups = document.createElement("div");
+        ups.className = "order-arrows";
+        const up = document.createElement("button");
+        up.className = "order-arrow";
+        up.textContent = "▲";
+        up.disabled = i === 0;
+        up.addEventListener("click", () => swap(i, i - 1));
+        const down = document.createElement("button");
+        down.className = "order-arrow";
+        down.textContent = "▼";
+        down.disabled = i === codes.length - 1;
+        down.addEventListener("click", () => swap(i, i + 1));
+        ups.appendChild(up);
+        ups.appendChild(down);
+
+        row.appendChild(rank);
+        row.appendChild(label);
+        row.appendChild(sel);
+        row.appendChild(ups);
+        listEl.appendChild(row);
+      });
+    }
+    function swap(a, b) {
+      const t = codes[a]; codes[a] = codes[b]; codes[b] = t;
+      err.textContent = "";
+      render();
+    }
+    render();
+
+    const btn = document.createElement("button");
+    btn.className = "lock-btn";
+    btn.textContent = "确认档案";
+    const err = document.createElement("div");
+    err.className = "lock-error";
+    wrap.appendChild(btn);
+    wrap.appendChild(err);
+
+    const win = createWindow(node, wrap, { lockDialog: true });
+
+    btn.addEventListener("click", () => {
+      if (codes.some((c) => !chosen[c])) {
+        err.textContent = "还有代号没认。每个代号都要指认一个声纹。";
+        return;
+      }
+      const ok = codes.length === ans.length &&
+        codes.every((c, i) => c === ans[i].code && chosen[c] === ans[i].voice);
+      if (ok) doUnlock(node, win);
+      else err.textContent = "对不上。谁是谁、谁先被造出来——再翻翻深处的档案。";
+    });
   }
 
   /* ===================================================================
@@ -638,7 +1020,7 @@
       ta.addEventListener("input", () => {
         node.content = ta.value.split("\n");
         const rec = openWindows[node.__id];
-        if (rec) { const b = rec.win.querySelector(".txt-body"); if (b) b.textContent = ta.value; }
+        if (rec) { const b = rec.win.querySelector(".txt-body"); if (b) renderTxt(b, ta.value); }
       });
       inspector.appendChild(field("文本内容（每行一段）", ta));
     } else if (node.type === "img") {
@@ -828,6 +1210,20 @@
     renderAll();
   }
 
+  function resetProgress() {
+    const ok = window.confirm(
+      "确定要重置游玩进度吗？\n这会清空：已解锁的记录、看过的记录、你给记录起的名字、人物备注。\n（不影响 desktop-data.js 里的游戏内容。）"
+    );
+    if (!ok) return;
+    try {
+      localStorage.removeItem(VIEWED_KEY);
+      localStorage.removeItem(FILENAME_KEY);
+      localStorage.removeItem(NOTES_KEY);
+    } catch (e) {}
+    location.reload();
+  }
+
+  document.getElementById("btn-reset-progress").addEventListener("click", resetProgress);
   document.getElementById("btn-edit").addEventListener("click", toggleEdit);
   document.getElementById("btn-add-txt").addEventListener("click", () => addItem("txt"));
   document.getElementById("btn-add-img").addEventListener("click", () => addItem("img"));
@@ -856,6 +1252,7 @@
   // ---- 启动 ----
   loadNotes();                                             // 玩家备注（与作者草稿分开存）
   loadPlayerNames();                                       // 玩家给日志起的名字
+  loadViewed();                                            // 玩家看过哪些记录
   ORIGINAL_FILE_SIG = JSON.stringify(cleanClone(DESKTOP)); // 先记下文件版本指纹
   const hadDraft = loadDraft();                            // 有草稿且文件没被改过 -> 恢复
   reindex(DESKTOP.items);

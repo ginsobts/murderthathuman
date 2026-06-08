@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>织 · 家庭操作系统</title>
-  <link rel="stylesheet" href="desktop.css" />
+  <link rel="stylesheet" href="desktop.css?v=6" />
 </head>
 <body>
   <!-- 桌面：图标会由 desktop.js 根据 desktop-data.js 自动生成 -->
@@ -22,6 +22,7 @@
         <button class="tool-btn" id="btn-export">导出配置</button>
         <button class="tool-btn" id="btn-reset" title="清空草稿，回到 desktop-data.js 文件版本">恢复文件版本</button>
       </div>
+      <button class="tool-btn" id="btn-reset-progress" title="清空你的游玩进度：解锁、看过的记录、改名、人物备注">↺ 重置进度</button>
       <button class="tool-btn" id="btn-edit">✏️ 编辑模式</button>
     </div>
 
@@ -36,7 +37,7 @@
   </div>
 
   <!-- 配置在前，引擎在后 -->
-  <script src="desktop-data.js"></script>
-  <script src="desktop.js"></script>
+  <script src="desktop-data.js?v=6"></script>
+  <script src="desktop.js?v=6"></script>
 </body>
 </html>
