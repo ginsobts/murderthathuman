@@ -13,23 +13,26 @@ const path = require("path");
 
 const here = __dirname;
 const read = (p) => fs.readFileSync(path.join(here, p), "utf8");
-const dataUri = (p) => {
+const dataUri = (p, mime) => {
   const b64 = fs.readFileSync(path.join(here, p)).toString("base64");
-  return "data:image/png;base64," + b64;
+  return "data:" + (mime || "image/png") + ";base64," + b64;
 };
 
+// 注意：用 assets/sm-*.（压缩版）来内嵌。
+// CSS 里的 url() 不能塞太大的 data URI（浏览器会直接丢掉整条 background），
+// 所以壁纸必须是压缩过的小图。改图后先跑 `python shrink-assets.py` 再跑本脚本。
 let css = read("desktop.css");
 let engine = read("desktop.js");
 const data = read("desktop-data.js");
 
-// 1) 把 CSS 里的壁纸换成内嵌 data URI
-css = css.replace(/url\(["']?assets\/wallpaper\.png["']?\)/g, 'url("' + dataUri("assets/wallpaper.png") + '")');
+// 1) 把 CSS 里的壁纸换成内嵌 data URI（压缩版 JPEG）
+css = css.replace(/url\(["']?assets\/wallpaper\.png["']?\)/g, 'url("' + dataUri("assets/sm-wallpaper.jpg", "image/jpeg") + '")');
 
-// 2) 把引擎里的图标路径换成内嵌 data URI
+// 2) 把引擎里的图标路径换成内嵌 data URI（压缩版 PNG）
 const iconMap = {
-  "assets/icon-txt.png": dataUri("assets/icon-txt.png"),
-  "assets/icon-img.png": dataUri("assets/icon-img.png"),
-  "assets/icon-folder.png": dataUri("assets/icon-folder.png"),
+  "assets/icon-txt.png": dataUri("assets/sm-icon-txt.png"),
+  "assets/icon-img.png": dataUri("assets/sm-icon-img.png"),
+  "assets/icon-folder.png": dataUri("assets/sm-icon-folder.png"),
 };
 Object.keys(iconMap).forEach((rel) => {
   engine = engine.split('"' + rel + '"').join('"' + iconMap[rel] + '"');
