@@ -64,6 +64,16 @@ body.edit-mode #icon-layer > .icon:active { cursor: grabbing; }
   object-fit: contain;
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
 }
+.icon .glyph-emoji {
+  display: block;
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 6px;
+  font-size: 40px;
+  line-height: 52px;
+  text-align: center;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
+}
 .icon .label {
   font-size: 12px;
   color: var(--text);
@@ -114,6 +124,26 @@ body.edit-mode #icon-layer > .icon:active { cursor: grabbing; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.window-bar .rename {
+  flex: none;
+  margin-right: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.window-bar .rename:hover { color: var(--accent); }
+.window-bar .title-input {
+  width: 100%;
+  background: var(--bg-0);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 2px 6px;
+  outline: none;
 }
 .window-bar .close {
   width: 16px;
@@ -207,6 +237,37 @@ body.edit-mode #icon-layer > .icon:active { cursor: grabbing; }
   font-size: 12px;
   color: #d98a8a;
 }
+
+/* ===== 人物备注程序 ===== */
+.notes-app { display: flex; flex-direction: column; }
+.notes-intro {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+.notes-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.notes-code { flex: 0 0 118px; }
+.notes-code .code { font-size: 13px; color: var(--accent); font-weight: bold; }
+.notes-code .code-hint { font-size: 10.5px; color: var(--text-dim); margin-top: 2px; line-height: 1.35; }
+.notes-row input {
+  flex: 1;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  outline: none;
+}
+.notes-row input:focus { border-color: var(--accent); }
 
 /* ===== 左下角系统信息 ===== */
 #system-tag {

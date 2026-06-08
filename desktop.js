@@ -13,12 +13,49 @@
 (function () {
   "use strict";
 
-  const ICON_GLYPH = { txt: "📄", img: "🖼️", folder: "📁" };
+  const ICON_GLYPH = { txt: "📄", img: "🖼️", folder: "📁", notes: "📝" };
   const ICON_IMG = {
     txt: "assets/icon-txt.png",
     img: "assets/icon-img.png",
     folder: "assets/icon-folder.png",
   };
+
+  // ---- 人物备注（玩家给代号写真名）----
+  const NOTES_KEY = "weave_os_notes_v1";
+  let annotations = {}; // code -> 玩家写的名字
+  function loadNotes() {
+    try { const r = localStorage.getItem(NOTES_KEY); if (r) annotations = JSON.parse(r) || {}; } catch (e) {}
+  }
+  function saveNotes() {
+    try { localStorage.setItem(NOTES_KEY, JSON.stringify(annotations)); } catch (e) {}
+  }
+  function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+  function applyAnnotations(text) {
+    let out = String(text == null ? "" : text);
+    // 长代号先替换，避免 VOX-1 抢先吃掉 VOX-12 这类前缀
+    Object.keys(annotations)
+      .sort((a, b) => b.length - a.length)
+      .forEach((code) => {
+        const name = (annotations[code] || "").trim();
+        if (!name) return;
+        out = out.replace(new RegExp(escapeRe(code), "g"), name);
+      });
+    return out;
+  }
+
+  // ---- 玩家给日志改名（标记推断出的时间/含义）----
+  const FILENAME_KEY = "weave_os_filenames_v1";
+  let playerNames = {}; // __id -> 玩家起的名字
+  function loadPlayerNames() {
+    try { const r = localStorage.getItem(FILENAME_KEY); if (r) playerNames = JSON.parse(r) || {}; } catch (e) {}
+  }
+  function savePlayerNames() {
+    try { localStorage.setItem(FILENAME_KEY, JSON.stringify(playerNames)); } catch (e) {}
+  }
+  function displayName(node) {
+    const p = playerNames[node.__id];
+    return (p != null && p !== "") ? p : (node.name || "(未命名)");
+  }
 
   const desktop = document.getElementById("desktop");
   const iconLayer = document.getElementById("icon-layer");
@@ -163,15 +200,23 @@
     if (selected === node) el.classList.add("selected");
     node.__iconEl = el;
 
-    const glyph = document.createElement("img");
-    glyph.className = "glyph";
-    glyph.src = ICON_IMG[node.type] || ICON_IMG.txt;
-    glyph.alt = node.type;
-    glyph.draggable = false;
+    let glyph;
+    if (ICON_IMG[node.type]) {
+      glyph = document.createElement("img");
+      glyph.className = "glyph";
+      glyph.src = ICON_IMG[node.type];
+      glyph.alt = node.type;
+      glyph.draggable = false;
+    } else {
+      // notes 等没有专属图片的，用 emoji 占位
+      glyph = document.createElement("span");
+      glyph.className = "glyph-emoji";
+      glyph.textContent = ICON_GLYPH[node.type] || "❓";
+    }
 
     const label = document.createElement("span");
     label.className = "label";
-    label.textContent = node.name || "(未命名)";
+    label.textContent = displayName(node);
 
     el.appendChild(glyph);
     el.appendChild(label);
@@ -213,6 +258,8 @@
     if (openWindows[node.__id]) { focusWindow(openWindows[node.__id].win, node); return; }
     if (node.locked && !unlocked[node.__id]) { openLockDialog(node); return; }
 
+    if (node.type === "notes") { openNotesApp(node); return; }
+
     let body;
     if (node.type === "txt") body = buildTxtBody(node);
     else if (node.type === "img") body = buildImgBody(node);
@@ -221,10 +268,14 @@
     createWindow(node, body);
   }
 
+  function rawText(node) {
+    return Array.isArray(node.content) ? node.content.join("\n") : String(node.content || "");
+  }
+
   function buildTxtBody(node) {
     const div = document.createElement("div");
     div.className = "txt-body";
-    div.textContent = Array.isArray(node.content) ? node.content.join("\n") : String(node.content || "");
+    div.textContent = applyAnnotations(rawText(node));
     return div;
   }
 
@@ -239,7 +290,7 @@
     if (node.caption) {
       const cap = document.createElement("div");
       cap.className = "caption";
-      cap.textContent = node.caption;
+      cap.textContent = applyAnnotations(node.caption);
       div.appendChild(cap);
     }
     return div;
@@ -266,6 +317,69 @@
   }
 
   /* ===================================================================
+   *  人物备注程序
+   * =================================================================== */
+  function openNotesApp(node) {
+    const wrap = document.createElement("div");
+    wrap.className = "notes-app";
+
+    const intro = document.createElement("div");
+    intro.className = "notes-intro";
+    intro.textContent = node.appIntro ||
+      "为每个代号写下你推断出的真名。填写后，所有录音文本里的代号会自动显示成这个名字。";
+    wrap.appendChild(intro);
+
+    const roster = DESKTOP.roster || [];
+    roster.forEach((r) => {
+      const row = document.createElement("div");
+      row.className = "notes-row";
+
+      const left = document.createElement("div");
+      left.className = "notes-code";
+      const codeEl = document.createElement("div");
+      codeEl.className = "code";
+      codeEl.textContent = r.code;
+      const hintEl = document.createElement("div");
+      hintEl.className = "code-hint";
+      hintEl.textContent = r.hint || "";
+      left.appendChild(codeEl);
+      left.appendChild(hintEl);
+
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.placeholder = "写下真名…";
+      inp.value = annotations[r.code] || "";
+      inp.addEventListener("input", () => {
+        annotations[r.code] = inp.value;
+        saveNotes();
+        refreshAnnotated();
+      });
+
+      row.appendChild(left);
+      row.appendChild(inp);
+      wrap.appendChild(row);
+    });
+
+    createWindow(node, wrap, { notes: true });
+  }
+
+  // 备注变化后，刷新所有已打开的文本/图片窗口里的代号显示
+  function refreshAnnotated() {
+    Object.keys(openWindows).forEach((id) => {
+      const rec = openWindows[id];
+      const n = rec.node;
+      if (!n) return;
+      if (n.type === "txt") {
+        const b = rec.win.querySelector(".txt-body");
+        if (b) b.textContent = applyAnnotations(rawText(n));
+      } else if (n.type === "img" && n.caption) {
+        const c = rec.win.querySelector(".caption");
+        if (c) c.textContent = applyAnnotations(n.caption);
+      }
+    });
+  }
+
+  /* ===================================================================
    *  上锁密码框
    * =================================================================== */
   function openLockDialog(node) {
@@ -274,7 +388,7 @@
     wrap.innerHTML =
       '<div class="lock-icon">🔒</div>' +
       '<div class="hint"></div>';
-    wrap.querySelector(".hint").textContent = node.lockHint || "此文件已加密，请输入密码。";
+    wrap.querySelector(".hint").textContent = "此文件已加密。请输入密码。";
 
     const inp = document.createElement("input");
     inp.type = "text";
@@ -322,6 +436,7 @@
     win.style.top = 80 + count * 30 + "px";
     if (opts.lockDialog) { win.style.width = "300px"; win.style.height = "auto"; }
     else if (opts.export) { win.style.width = "520px"; win.style.height = "440px"; }
+    else if (opts.notes) { win.style.width = "400px"; win.style.height = "440px"; }
     else {
       win.style.width = node.type === "folder" ? "420px" : "360px";
       win.style.height = node.type === "img" ? "auto" : "300px";
@@ -332,12 +447,30 @@
     const title = document.createElement("div");
     title.className = "title";
     const glyph = opts.lockDialog ? "🔒" : opts.export ? "💾" : (ICON_GLYPH[node.type] || "");
-    title.textContent = glyph + " " + (node.name || "");
+    function renderTitle() { title.textContent = glyph + " " + displayName(node); }
+    renderTitle();
     const close = document.createElement("div");
     close.className = "close";
     close.title = "关闭";
-    bar.appendChild(title);
-    bar.appendChild(close);
+
+    // 玩家重命名（仅游玩模式、普通文件，用来标记推断的时间/含义）
+    const canRename = !opts.lockDialog && !opts.export && !opts.notes && !editMode;
+    if (canRename) {
+      const ren = document.createElement("div");
+      ren.className = "rename";
+      ren.textContent = "✎";
+      ren.title = "重命名（标记你的推断）";
+      ren.addEventListener("click", (e) => {
+        e.stopPropagation();
+        startRename(node, title, renderTitle);
+      });
+      bar.appendChild(title);
+      bar.appendChild(ren);
+      bar.appendChild(close);
+    } else {
+      bar.appendChild(title);
+      bar.appendChild(close);
+    }
 
     const body = document.createElement("div");
     body.className = "window-body";
@@ -368,10 +501,41 @@
     }
   }
 
+  function startRename(node, titleEl, renderTitle) {
+    titleEl.textContent = "";
+    const input = document.createElement("input");
+    input.className = "title-input";
+    input.value = displayName(node);
+    titleEl.appendChild(input);
+    input.focus();
+    input.select();
+    input.addEventListener("mousedown", (e) => e.stopPropagation());
+    let done = false;
+    function commit() {
+      if (done) return;
+      done = true;
+      const v = input.value.trim();
+      if (v) playerNames[node.__id] = v; else delete playerNames[node.__id];
+      savePlayerNames();
+      renderTitle();
+      if (node.__iconEl) {
+        const lab = node.__iconEl.querySelector(".label");
+        if (lab) lab.textContent = displayName(node);
+      }
+    }
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") commit();
+      else if (e.key === "Escape") { done = true; renderTitle(); }
+    });
+    input.addEventListener("blur", commit);
+  }
+
   function makeDraggable(win, handle) {
     let sx, sy, bx, by, dragging = false;
     handle.addEventListener("mousedown", (e) => {
       if (e.target.classList.contains("close")) return;
+      if (e.target.classList.contains("rename")) return;
+      if (e.target.classList.contains("title-input")) return;
       dragging = true;
       sx = e.clientX; sy = e.clientY;
       const r = win.getBoundingClientRect(); bx = r.left; by = r.top;
@@ -690,6 +854,8 @@
   });
 
   // ---- 启动 ----
+  loadNotes();                                             // 玩家备注（与作者草稿分开存）
+  loadPlayerNames();                                       // 玩家给日志起的名字
   ORIGINAL_FILE_SIG = JSON.stringify(cleanClone(DESKTOP)); // 先记下文件版本指纹
   const hadDraft = loadDraft();                            // 有草稿且文件没被改过 -> 恢复
   reindex(DESKTOP.items);
