@@ -58,12 +58,21 @@
       .replace(/[\s，。、！？,.!?；;：:'"‘’“”「」『』（）()【】\[\]\-—_~·]/g, "");
   }
 
-  // 行首是某个声纹代号 + “：” 时，把说话人名字（含冒号）标成浅蓝色。
+  function rosterSpeakerTokens() {
+    const tokens = [];
+    (DESKTOP.roster || []).forEach((r) => {
+      if (!r) return;
+      if (r.code) tokens.push(r.code);
+      if (r.machineId) tokens.push(r.machineId);
+    });
+    tokens.push("未知声纹", "声纹无法识别", "识别失败");
+    return tokens.filter(Boolean);
+  }
+
+  // 行首是某个声纹代号 / 机器编号 + “：” 时，把说话人名字（含冒号）标成浅蓝色。
   // 只认花名册里的代号，避免把“自动输液剂量校验：”这种设备读数也染色。
   function speakerRegex() {
-    const codes = (DESKTOP.roster || [])
-      .map((r) => r && r.code)
-      .filter(Boolean)
+    const codes = rosterSpeakerTokens()
       .sort((a, b) => b.length - a.length)
       .map(escapeRe);
     if (!codes.length) return null;
@@ -1316,11 +1325,90 @@
     if (node.type === "txt") {
       const ta = document.createElement("textarea");
       ta.value = Array.isArray(node.content) ? node.content.join("\n") : String(node.content || "");
-      ta.addEventListener("input", () => {
+      function syncTextContent() {
         node.content = ta.value.split("\n");
         const rec = openWindows[node.__id];
         if (rec) { const b = rec.win.querySelector(".txt-body"); if (b) renderTxt(b, ta.value); }
+      }
+      ta.addEventListener("input", syncTextContent);
+
+      const speakerTool = document.createElement("div");
+      speakerTool.className = "speaker-tool";
+
+      const speakerSel = document.createElement("select");
+      (DESKTOP.roster || []).forEach((r) => {
+        if (!r || !r.code) return;
+        const opt = document.createElement("option");
+        opt.value = r.code;
+        opt.textContent = (r.person ? r.person + " · " : "") + r.code +
+          (r.machineId ? " / " + r.machineId : "");
+        speakerSel.appendChild(opt);
       });
+
+      const modeSel = document.createElement("select");
+      [
+        ["voice", "显示声纹"],
+        ["machine", "显示机器编号"],
+        ["unknown", "识别失败"],
+      ].forEach(([v, t]) => {
+        const opt = document.createElement("option");
+        opt.value = v;
+        opt.textContent = t;
+        modeSel.appendChild(opt);
+      });
+
+      const lineInp = document.createElement("input");
+      lineInp.type = "text";
+      lineInp.placeholder = "输入台词（可留空，只插入说话人前缀）";
+
+      const insertBtn = document.createElement("button");
+      insertBtn.type = "button";
+      insertBtn.textContent = "插入说话行";
+
+      function selectedRoster() {
+        return (DESKTOP.roster || []).find((r) => r && r.code === speakerSel.value) || {};
+      }
+      function speakerPrefix() {
+        const r = selectedRoster();
+        if (modeSel.value === "unknown") return "未知声纹";
+        if (modeSel.value === "machine") return r.machineId || r.code || "未知声纹";
+        return r.code || "未知声纹";
+      }
+      function insertAtCursor(text) {
+        const start = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
+        const end = ta.selectionEnd == null ? ta.value.length : ta.selectionEnd;
+        const before = ta.value.slice(0, start);
+        const after = ta.value.slice(end);
+        const prefix = before && !before.endsWith("\n") ? "\n" : "";
+        const suffix = after && !after.startsWith("\n") ? "\n" : "";
+        ta.value = before + prefix + text + suffix + after;
+        const pos = start + prefix.length + text.length + suffix.length;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+        syncTextContent();
+      }
+
+      insertBtn.addEventListener("click", () => {
+        const body = lineInp.value.trim();
+        insertAtCursor(speakerPrefix() + "：" + body);
+        lineInp.value = "";
+      });
+      lineInp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); insertBtn.click(); }
+      });
+
+      const row1 = document.createElement("div");
+      row1.className = "speaker-tool-row";
+      row1.appendChild(speakerSel);
+      row1.appendChild(modeSel);
+      const row2 = document.createElement("div");
+      row2.className = "speaker-tool-row";
+      row2.appendChild(lineInp);
+      row2.appendChild(insertBtn);
+      speakerTool.appendChild(row1);
+      speakerTool.appendChild(row2);
+
+      inspector.appendChild(field("说话人（自动插入前缀）", speakerTool));
       inspector.appendChild(field("文本内容（每行一段）", ta));
     } else if (node.type === "img") {
       const srcInp = document.createElement("input");
