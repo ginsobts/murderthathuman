@@ -290,6 +290,112 @@ body.edit-mode #icon-layer > .icon:active { cursor: grabbing; }
 }
 .choice-opt:hover { border-color: var(--accent); background: rgba(255,255,255,0.03); }
 
+/* 数字密码键盘面板 */
+.numpad-dots {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 14px 0 10px;
+}
+.numpad-cell {
+  width: 30px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-family: monospace;
+  color: var(--text);
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.numpad-cell.filled { border-color: var(--accent); color: #7fc3ff; }
+.numpad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  width: 200px;
+  margin: 6px auto 0;
+}
+.numpad-key {
+  height: 42px;
+  font-size: 17px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.numpad-key:hover { border-color: var(--accent); background: rgba(255,255,255,0.04); }
+.numpad-key:active { background: var(--accent-soft); }
+.numpad-key.numpad-fn { color: var(--accent); font-size: 16px; }
+
+/* 记忆调律台（音乐锁） */
+.memory-lock { max-width: 540px; }
+.memory-lock .lock-icon { font-size: 30px; color: var(--accent); }
+.mem-section {
+  text-align: left;
+  font-size: 12px;
+  color: var(--muted, #8a99a8);
+  margin: 14px 2px 8px;
+}
+
+/* 六根竖向推子，横排一行 */
+.mem-faders {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  gap: 6px;
+}
+.mem-fader {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 2px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  transition: border-color 0.12s, background 0.12s;
+}
+.mem-fader.on {
+  border-color: var(--accent);
+  background: var(--accent-soft, rgba(127,195,255,0.12));
+}
+.mem-emotion {
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  min-height: 15px;
+}
+.mem-hr { color: #ff8a8a; font-variant-numeric: tabular-nums; }
+.mem-slider {
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;            /* 下＝低(min)，上＝高(max) */
+  width: 22px;
+  height: 130px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.mem-present {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.mem-present input { accent-color: var(--accent); cursor: pointer; margin: 0; }
+.mem-fader-label { text-align: center; line-height: 1.25; }
+.mem-fader-label .mem-inst-main { font-size: 13px; color: var(--text); font-weight: 600; }
+
 /* 档案锁：代号 + 声纹下拉 */
 .dossier-row .dossier-code {
   flex: none;
@@ -470,6 +576,41 @@ body.edit-mode #inspector.shown { display: block; }
   border-radius: 4px;
   padding: 2px 8px;
 }
+.insp-field select {
+  width: 100%;
+  background: var(--bg-1);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 12.5px;
+}
+.insp-field input[type="number"] {
+  width: 100%;
+  background: var(--bg-1);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 12.5px;
+}
+.insp-mem-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  margin-bottom: 9px;
+  background: var(--bg-1);
+}
+.insp-mem-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+.insp-mem-inst { flex: 0 0 130px; width: 130px; }
+.insp-mem-hr { display: flex; align-items: center; gap: 8px; }
+.insp-mem-hr input[type="range"] { flex: 1 1 auto; }
+.insp-hr { color: #ff8a8a; font-size: 12px; min-width: 44px; text-align: right; }
 .insp-del {
   width: 100%;
   margin-top: 6px;

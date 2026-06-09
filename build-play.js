@@ -38,7 +38,18 @@ Object.keys(iconMap).forEach((rel) => {
   engine = engine.split('"' + rel + '"').join('"' + iconMap[rel] + '"');
 });
 
-// 3) 隐藏编辑入口（保留 DOM，避免引擎里的 getElementById 报错）
+// 3) 内嵌乐器采样（音乐锁用），做成 window.WEAVE_SAMPLES 供引擎按需取用
+const instruments = ["violin", "bassoon", "trumpet", "flute", "harp", "piano"];
+const sampleEntries = instruments
+  .map((inst) => {
+    const p = path.join(here, "assets", "instruments", inst + ".mp3");
+    if (!fs.existsSync(p)) return null;
+    return JSON.stringify(inst) + ":" + JSON.stringify(dataUri("assets/instruments/" + inst + ".mp3", "audio/mpeg"));
+  })
+  .filter(Boolean);
+const samplesScript = "window.WEAVE_SAMPLES={" + sampleEntries.join(",") + "};";
+
+// 4) 隐藏编辑入口（保留 DOM，避免引擎里的 getElementById 报错）
 const hideEditor =
   "#btn-edit{display:none !important;}" +
   "#edit-only{display:none !important;}";
@@ -55,6 +66,9 @@ ${hideEditor}
 </style>
 </head>
 <body>
+<script>
+${samplesScript}
+</script>
 <div id="desktop">
   <div id="icon-layer"></div>
   <div id="toolbar">

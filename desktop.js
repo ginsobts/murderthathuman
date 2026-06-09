@@ -530,6 +530,9 @@
     if (node.lockType === "order") { openOrderLock(node); return; }
     if (node.lockType === "choice") { openChoiceLock(node); return; }
     if (node.lockType === "dossier") { openDossierLock(node); return; }
+    if (node.lockType === "memory") { openMemoryLock(node); return; }
+    // 纯数字密码 → 键盘面板
+    if (/^[0-9]+$/.test(normPass(node.password))) { openNumericLock(node); return; }
 
     const wrap = document.createElement("div");
     wrap.className = "lock-body";
@@ -565,6 +568,82 @@
     }
     btn.addEventListener("click", tryUnlock);
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") tryUnlock(); });
+  }
+
+  /* ===== 数字密码键盘面板：显示位数 + 鼠标小键盘 + 键盘输入 ===== */
+  function openNumericLock(node) {
+    const answer = normPass(node.password);
+    const len = answer.length;
+    let entered = "";
+
+    const wrap = document.createElement("div");
+    wrap.className = "lock-body numpad-lock";
+    wrap.innerHTML =
+      '<div class="lock-icon">🔒</div>' +
+      '<div class="hint"></div>';
+    wrap.querySelector(".hint").textContent =
+      node.lockPrompt || ("请输入 " + len + " 位数字密码");
+
+    // 位数显示框
+    const dots = document.createElement("div");
+    dots.className = "numpad-dots";
+    const cells = [];
+    for (let i = 0; i < len; i++) {
+      const c = document.createElement("span");
+      c.className = "numpad-cell";
+      dots.appendChild(c);
+      cells.push(c);
+    }
+    wrap.appendChild(dots);
+
+    const err = document.createElement("div");
+    err.className = "lock-error";
+
+    function refresh() {
+      cells.forEach((c, i) => {
+        c.textContent = entered[i] || "";
+        c.classList.toggle("filled", i < entered.length);
+      });
+    }
+    function input(d) {
+      if (entered.length >= len) return;
+      entered += d;
+      err.textContent = "";
+      refresh();
+      if (entered.length === len) setTimeout(verify, 120);
+    }
+    function back() { entered = entered.slice(0, -1); err.textContent = ""; refresh(); }
+    function verify() {
+      if (entered === answer) doUnlock(node, win);
+      else { err.textContent = "密码错误。"; entered = ""; refresh(); }
+    }
+
+    // 小键盘
+    const pad = document.createElement("div");
+    pad.className = "numpad-grid";
+    const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "back", "0", "ok"];
+    keys.forEach((k) => {
+      const b = document.createElement("button");
+      b.className = "numpad-key";
+      if (k === "back") { b.textContent = "⌫"; b.classList.add("numpad-fn"); b.addEventListener("click", back); }
+      else if (k === "ok") { b.textContent = "✓"; b.classList.add("numpad-fn"); b.addEventListener("click", verify); }
+      else { b.textContent = k; b.addEventListener("click", () => input(k)); }
+      pad.appendChild(b);
+    });
+    wrap.appendChild(pad);
+    wrap.appendChild(err);
+
+    const win = createWindow(node, wrap, { lockDialog: true });
+
+    // 键盘输入
+    function onKey(e) {
+      if (!document.body.contains(win)) { document.removeEventListener("keydown", onKey); return; }
+      if (e.key >= "0" && e.key <= "9") { input(e.key); e.preventDefault(); }
+      else if (e.key === "Backspace") { back(); e.preventDefault(); }
+      else if (e.key === "Enter") { verify(); e.preventDefault(); }
+    }
+    document.addEventListener("keydown", onKey);
+    refresh();
   }
 
   function doUnlock(node, win) {
@@ -806,6 +885,226 @@
   }
 
   /* ===================================================================
+   *  记忆调律台（音乐锁）
+   *  织用音乐编码记忆：在场每个人 = 一件乐器，音高 = 当时的情绪。
+   *  玩家靠剧情推断“谁在场 + 各自什么情绪”，点亮乐器、把情绪滑块调到位，
+   *  再点“还原”。对了就回放对话；错了只说“记忆依旧模糊”，不给方向提示——
+   *  所以唯一的解法是把剧情读懂。
+   * =================================================================== */
+  const INSTRUMENT_LABEL = {
+    violin: "小提琴", cello: "大提琴", viola: "中提琴", bassoon: "巴松管",
+    trumpet: "小号", flute: "长笛", clarinet: "单簧管", oboe: "双簧管",
+    harp: "竖琴", piano: "钢琴", marimba: "马林巴", glass: "玻璃琴",
+    french_horn: "圆号",
+  };
+  // 滑块 0~1 ＝ 心率：越往上越快，最底＝0（已无心跳，静默）
+  const MAX_BPM = 160;
+  function valueToBpm(v) { return Math.round(v * MAX_BPM); }
+  function hrText(v) { return "♥ " + valueToBpm(v); }
+
+  function instrumentOf(code) {
+    const r = (DESKTOP.roster || []).find((x) => x && x.code === code);
+    return (r && r.instrument) || "piano";
+  }
+
+  // ---- WebAudio：懒加载采样，按情绪变调播放（声音只是氛围，不充当答案提示）----
+  let audioCtx = null;
+  let audioMaster = null; // 主音量 → 压限器 → 输出
+  const sampleBuffers = {};
+  function getAudioCtx() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+      catch (e) { audioCtx = null; }
+      if (audioCtx) {
+        audioMaster = audioCtx.createGain();
+        audioMaster.gain.value = 2.6; // 整体调大
+        const comp = audioCtx.createDynamicsCompressor(); // 防止叠加破音
+        try {
+          comp.threshold.value = -10;
+          comp.ratio.value = 12;
+          comp.attack.value = 0.003;
+          comp.release.value = 0.25;
+        } catch (e) {}
+        audioMaster.connect(comp);
+        comp.connect(audioCtx.destination);
+      }
+    }
+    if (audioCtx && audioCtx.state === "suspended") { try { audioCtx.resume(); } catch (e) {} }
+    return audioCtx;
+  }
+  function sampleUrl(inst) {
+    const inj = window.WEAVE_SAMPLES;
+    if (inj && inj[inst]) return inj[inst];
+    return "assets/instruments/" + inst + ".mp3?v=3";
+  }
+  function loadSample(inst) {
+    if (sampleBuffers[inst]) return Promise.resolve(sampleBuffers[inst]);
+    const ctx = getAudioCtx();
+    if (!ctx) return Promise.resolve(null);
+    return fetch(sampleUrl(inst))
+      .then((r) => r.arrayBuffer())
+      .then((arr) => new Promise((res, rej) => ctx.decodeAudioData(arr, res, rej)))
+      .then((buf) => { sampleBuffers[inst] = buf; return buf; })
+      .catch(() => null);
+  }
+  // 心率 = 一记单音心跳的快慢。每件乐器只用它最具代表性的那一个音，
+  // 反复敲出来当“心跳”：心率越快，敲击越密；心率为 0 则静默（人已不在跳动）。
+  const HR_SILENT = 18; // 低于此 BPM 视作没有心跳 → 静默
+  // 奏一记心跳（单音），返回到下一记的间隔秒数（供循环排程）；静默返回 0
+  function playInstrument(inst, value) {
+    const ctx = getAudioCtx();
+    if (!ctx) return 0;
+    const bpm = valueToBpm(value);
+    if (bpm < HR_SILENT) return 0; // 心率 0/极低 → 平线静默
+    const step = 60 / bpm;          // 每记心跳的间隔
+    const noteLen = Math.min(step * 0.7, 0.45);
+    const peak = 0.6 + value * 0.3;
+    loadSample(inst).then((buf) => {
+      if (!buf) return;
+      const t = ctx.currentTime;
+      const src = ctx.createBufferSource();
+      src.buffer = buf; // 采样本身就是该乐器的代表音高，原速播放
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(peak, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(0.09, noteLen));
+      src.connect(g); g.connect(audioMaster || ctx.destination);
+      src.start(t); src.stop(t + noteLen + 0.05);
+    });
+    return step;
+  }
+
+  function openMemoryLock(node) {
+    const mem = node.memory || {};
+    const cast = (mem.cast || []).slice();
+    const tuning = mem.tuning || {};
+    const allCodes = (DESKTOP.roster || []).map((r) => r && r.code).filter(Boolean);
+
+    const wrap = document.createElement("div");
+    wrap.className = "lock-body memory-lock";
+
+    const icon = document.createElement("div");
+    icon.className = "lock-icon";
+    icon.textContent = "♪";
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = mem.prompt ||
+      "织把这段记忆谱成了曲子。点亮当时在场的人（乐器），把每个人的情绪调到对的位置，我才放得出来。";
+    wrap.appendChild(icon);
+    wrap.appendChild(hint);
+
+    // 每个声纹一根推子，初始都显示：code -> { value, present }
+    const active = {};
+    allCodes.forEach((code) => { active[code] = { value: 0.5, present: false }; });
+
+    // 勾“在场”后，按心率循环播放该乐器；心率随滑块实时变（下一轮生效）。
+    // 心率为 0（静默）时仍每 0.7s 复查一次，方便玩家拉上来后自动恢复跳动。
+    const loops = {}; // code -> timer id
+    function loopCycle(code) {
+      if (!active[code] || !active[code].present) return;
+      const dur = playInstrument(instrumentOf(code), active[code].value); // 0 = 静默
+      const cycleMs = dur > 0 ? dur * 1000 + 25 : 700; // 平稳脉冲
+      loops[code] = setTimeout(() => loopCycle(code), cycleMs);
+    }
+    function startLoop(code) { stopLoop(code); loopCycle(code); }
+    function stopLoop(code) { if (loops[code]) { clearTimeout(loops[code]); delete loops[code]; } }
+    function stopAllLoops() { Object.keys(loops).forEach(stopLoop); }
+
+    const rowsTitle = document.createElement("div");
+    rowsTitle.className = "mem-section";
+    rowsTitle.textContent = "勾上当时在场的人，把每个人的心率滑到位（越往上心率越快；滑到最底＝心率0，人已不在跳动）";
+
+    const fadersWrap = document.createElement("div");
+    fadersWrap.className = "mem-faders";
+
+    allCodes.forEach((code) => {
+      const inst = instrumentOf(code);
+      const col = document.createElement("div");
+      col.className = "mem-fader";
+
+      const emo = document.createElement("div");
+      emo.className = "mem-emotion mem-hr";
+      emo.textContent = hrText(active[code].value);
+
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.className = "mem-slider";
+      slider.min = "0"; slider.max = "100"; slider.step = "1";
+      slider.setAttribute("orient", "vertical"); // Firefox 竖向
+      slider.value = String(Math.round(active[code].value * 100));
+      slider.addEventListener("input", () => {
+        const v = Number(slider.value) / 100;
+        active[code].value = v;
+        emo.textContent = hrText(v);
+        err.textContent = "";
+      });
+      // 没勾在场时，拖动松手给一次试听；勾了在场则靠循环播放，不再叠加一次性
+      slider.addEventListener("change", () => {
+        if (!active[code].present) playInstrument(inst, active[code].value);
+      });
+
+      // 勾选框 ＝ 选“这个人当时在场”，并循环播放其旋律
+      const presentWrap = document.createElement("label");
+      presentWrap.className = "mem-present";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      const cbtxt = document.createElement("span");
+      cbtxt.textContent = "在场";
+      cb.addEventListener("change", () => {
+        active[code].present = cb.checked;
+        col.classList.toggle("on", cb.checked);
+        err.textContent = "";
+        if (cb.checked) startLoop(code); else stopLoop(code);
+      });
+      presentWrap.appendChild(cb);
+      presentWrap.appendChild(cbtxt);
+
+      // 只显示乐器名——“哪件乐器对应谁”要玩家自己从剧情里推
+      const lab = document.createElement("div");
+      lab.className = "mem-fader-label";
+      const ins = document.createElement("div");
+      ins.className = "mem-inst-main";
+      ins.textContent = INSTRUMENT_LABEL[inst] || inst;
+      lab.appendChild(ins);
+
+      col.appendChild(emo);
+      col.appendChild(slider);
+      col.appendChild(presentWrap);
+      col.appendChild(lab);
+      fadersWrap.appendChild(col);
+    });
+
+    wrap.appendChild(rowsTitle);
+    wrap.appendChild(fadersWrap);
+
+    const btn = document.createElement("button");
+    btn.className = "lock-btn";
+    btn.textContent = "♫ 还原这段记忆";
+    const err = document.createElement("div");
+    err.className = "lock-error";
+    wrap.appendChild(btn);
+    wrap.appendChild(err);
+
+    const win = createWindow(node, wrap, { lockDialog: true, onClose: stopAllLoops });
+    win.style.width = "560px"; // 六根竖推子横排，覆盖锁框默认 300px
+
+    btn.addEventListener("click", () => {
+      const chosen = allCodes.filter((c) => active[c].present);
+      const sameCast = chosen.length === cast.length && cast.every((c) => active[c].present);
+      if (!sameCast) { err.textContent = "记忆依旧模糊。在场的人不对。"; return; }
+      const allTuned = cast.every((c) => {
+        const t = tuning[c] || {};
+        const target = t.value != null ? t.value : 0.5;
+        const tol = t.tol != null ? t.tol : 0.1;
+        return Math.abs((active[c].value || 0) - target) <= tol;
+      });
+      if (!allTuned) { err.textContent = "记忆依旧模糊。有人的情绪没对上。"; return; }
+      stopAllLoops();
+      doUnlock(node, win);
+    });
+  }
+
+  /* ===================================================================
    *  窗口
    * =================================================================== */
   function createWindow(node, bodyEl, opts) {
@@ -865,7 +1164,7 @@
     openWindows[node.__id] = { win: win, node: node };
     focusWindow(win, node);
 
-    close.addEventListener("click", () => { win.remove(); delete openWindows[node.__id]; });
+    close.addEventListener("click", () => { win.remove(); delete openWindows[node.__id]; if (opts.onClose) opts.onClose(); });
     win.addEventListener("mousedown", () => focusWindow(win, node));
     makeDraggable(win, bar);
     return win;
@@ -1066,17 +1365,136 @@
     inspector.appendChild(lockWrap);
 
     const lockExtra = document.createElement("div");
+    function renderMemoryEditor(container) {
+      const mem = node.memory = node.memory || { prompt: "", cast: [], tuning: {} };
+      mem.cast = mem.cast || [];
+      mem.tuning = mem.tuning || {};
+
+      const promptTa = document.createElement("textarea");
+      promptTa.value = mem.prompt || "";
+      promptTa.addEventListener("input", () => { mem.prompt = promptTa.value; });
+      container.appendChild(field("调律台提示语", promptTa));
+
+      const note = document.createElement("div");
+      note.className = "insp-field";
+      note.style.fontSize = "12px";
+      note.style.color = "var(--text-dim)";
+      note.textContent =
+        "勾“在场”＝这段记忆里此人在场（玩家要推）。心率＝该人当时的♥（0–160），容差越小越难。乐器可在此改（全局生效）。";
+      container.appendChild(note);
+
+      const instOptions = Object.keys(INSTRUMENT_LABEL);
+      (DESKTOP.roster || []).forEach((r) => {
+        if (!r || !r.code) return;
+        const code = r.code;
+        const row = document.createElement("div");
+        row.className = "insp-mem-row";
+
+        const head = document.createElement("div");
+        head.className = "insp-mem-head";
+        const cbl = document.createElement("label");
+        cbl.className = "insp-check";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = mem.cast.indexOf(code) >= 0;
+        const cspan = document.createElement("span");
+        cspan.textContent = code + " 在场";
+        cbl.appendChild(cb);
+        cbl.appendChild(cspan);
+        head.appendChild(cbl);
+
+        const isel = document.createElement("select");
+        isel.className = "insp-mem-inst";
+        instOptions.forEach((k) => {
+          const o = document.createElement("option");
+          o.value = k; o.textContent = INSTRUMENT_LABEL[k];
+          isel.appendChild(o);
+        });
+        isel.value = r.instrument || "piano";
+        isel.addEventListener("change", () => { r.instrument = isel.value; });
+        head.appendChild(isel);
+        row.appendChild(head);
+
+        const tuneBox = document.createElement("div");
+        function renderTune() {
+          tuneBox.innerHTML = "";
+          if (mem.cast.indexOf(code) < 0) return;
+          const t = mem.tuning[code] = mem.tuning[code] || { value: 0.5, tol: 0.12 };
+          const hr = document.createElement("input");
+          hr.type = "range"; hr.min = "0"; hr.max = "160"; hr.step = "1";
+          hr.value = String(Math.round((t.value || 0) * 160));
+          const hrTag = document.createElement("span");
+          hrTag.className = "insp-hr";
+          hrTag.textContent = "♥ " + hr.value;
+          hr.addEventListener("input", () => {
+            t.value = Number(hr.value) / 160;
+            hrTag.textContent = "♥ " + hr.value;
+          });
+          const hrWrap = document.createElement("div");
+          hrWrap.className = "insp-mem-hr";
+          hrWrap.appendChild(hr); hrWrap.appendChild(hrTag);
+          tuneBox.appendChild(field("目标心率", hrWrap));
+          const tol = document.createElement("input");
+          tol.type = "number"; tol.min = "0.02"; tol.max = "0.5"; tol.step = "0.01";
+          tol.value = String(t.tol != null ? t.tol : 0.12);
+          tol.addEventListener("input", () => { t.tol = Number(tol.value) || 0.12; });
+          tuneBox.appendChild(field("容差(0.02–0.5)", tol));
+        }
+        cb.addEventListener("change", () => {
+          if (cb.checked) {
+            if (mem.cast.indexOf(code) < 0) mem.cast.push(code);
+            mem.tuning[code] = mem.tuning[code] || { value: 0.5, tol: 0.12 };
+          } else {
+            const i = mem.cast.indexOf(code);
+            if (i >= 0) mem.cast.splice(i, 1);
+          }
+          renderTune();
+        });
+        row.appendChild(tuneBox);
+        renderTune();
+        container.appendChild(row);
+      });
+    }
+
     function renderLockExtra() {
       lockExtra.innerHTML = "";
       if (!node.locked) return;
+
+      const typeSel = document.createElement("select");
+      [["", "密码锁"], ["memory", "记忆·音乐锁"], ["order", "排序锁(手改)"], ["dossier", "档案锁(手改)"]]
+        .forEach(([val, lab]) => {
+          const o = document.createElement("option");
+          o.value = val; o.textContent = lab; typeSel.appendChild(o);
+        });
+      typeSel.value = node.lockType || "";
+      typeSel.addEventListener("change", () => {
+        const v = typeSel.value;
+        if (v) node.lockType = v; else delete node.lockType;
+        if (v === "memory") node.memory = node.memory || { prompt: "", cast: [], tuning: {} };
+        renderLockExtra();
+      });
+      lockExtra.appendChild(field("锁类型", typeSel));
+
+      if (node.lockType === "memory") { renderMemoryEditor(lockExtra); return; }
+      if (node.lockType === "order" || node.lockType === "dossier") {
+        const n = document.createElement("div");
+        n.className = "insp-field"; n.style.fontSize = "12px"; n.style.color = "var(--text-dim)";
+        n.textContent = "排序锁/档案锁请直接在 desktop-data.js 里配置（暂不支持可视化编辑）。";
+        lockExtra.appendChild(n);
+        return;
+      }
+      // 普通密码锁
       const pwd = document.createElement("input");
       pwd.type = "text"; pwd.value = node.password || "";
       pwd.addEventListener("input", () => { node.password = pwd.value; });
       lockExtra.appendChild(field("密码", pwd));
       const hint = document.createElement("input");
-      hint.type = "text"; hint.value = node.lockHint || "";
-      hint.addEventListener("input", () => { node.lockHint = hint.value; });
-      lockExtra.appendChild(field("密码提示", hint));
+      hint.type = "text"; hint.value = node.lockPrompt || "";
+      hint.placeholder = "纯数字密码可留空（数字锁不显示提示）";
+      hint.addEventListener("input", () => {
+        if (hint.value) node.lockPrompt = hint.value; else delete node.lockPrompt;
+      });
+      lockExtra.appendChild(field("锁提示（文字/词语锁才显示）", hint));
     }
     lockChk.addEventListener("change", () => {
       node.locked = lockChk.checked;
@@ -1142,7 +1560,10 @@
     if (v && typeof v === "object") {
       const keys = Object.keys(v).filter((k) => k.indexOf("__") !== 0);
       if (keys.length === 0) return "{}";
-      const parts = keys.map((k) => pad1 + k + ": " + serializeValue(v[k], indent + 1));
+      const parts = keys.map((k) => {
+        const key = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k) ? k : JSON.stringify(k);
+        return pad1 + key + ": " + serializeValue(v[k], indent + 1);
+      });
       return "{\n" + parts.join(",\n") + "\n" + pad + "}";
     }
     return "null";
