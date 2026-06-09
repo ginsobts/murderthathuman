@@ -92,6 +92,24 @@ body.edit-mode #icon-layer > .icon:active { cursor: grabbing; }
 }
 .icon.unlocked .lock-badge { opacity: 0.35; }
 
+/* 编辑模式：游玩时会被隐藏的文件（调律台还原 / 逐层揭示），半透明 + 虚线框提示 */
+.icon.hidden-stub { opacity: 0.4; }
+.icon.hidden-stub .glyph,
+.icon.hidden-stub .glyph-emoji { filter: grayscale(0.6) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6)); }
+.icon.hidden-stub .label { font-style: italic; }
+.icon.hidden-stub::after {
+  content: "🎵 隐藏";
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  font-size: 10px;
+  font-style: normal;
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.55);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
 /* ===== 窗口 ===== */
 .window {
   position: absolute;
@@ -395,6 +413,30 @@ body.edit-mode #icon-layer > .icon:active { cursor: grabbing; }
 .mem-present input { accent-color: var(--accent); cursor: pointer; margin: 0; }
 .mem-fader-label { text-align: center; line-height: 1.25; }
 .mem-fader-label .mem-inst-main { font-size: 13px; color: var(--text); font-weight: 600; }
+
+/* 调律台 App：房间选择 + 还原成功提示 */
+.tuner-app { max-width: 560px; }
+.tuner-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 2px 4px;
+  font-size: 13px;
+  color: var(--text);
+}
+.tuner-room-select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.tuner-room-select:focus { outline: none; border-color: var(--accent); }
+.lock-error.tuner-ok { color: #4fd08a; }
 
 /* 档案锁：代号 + 声纹下拉 */
 .dossier-row .dossier-code {

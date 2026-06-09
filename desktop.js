@@ -13,7 +13,7 @@
 (function () {
   "use strict";
 
-  const ICON_GLYPH = { txt: "📄", img: "🖼️", folder: "📁", notes: "📝" };
+  const ICON_GLYPH = { txt: "📄", img: "🖼️", folder: "📁", notes: "📝", tuner: "🎵" };
   const ICON_IMG = {
     txt: "assets/icon-txt.png",
     img: "assets/icon-img.png",
@@ -133,6 +133,17 @@
     refreshOpenFolders();
   }
 
+  // ---- 玩家用“调律台”还原过的【单个文件】：被还原的 revealByTune 文件会出现 ----
+  // 每个隐藏文件单独配置自己的还原条件(node.memory)，不再和所在文件夹绑定。
+  const TUNED_KEY = "weave_os_tuned_v2";
+  let tunedNodes = {};          // 文件 __id -> true
+  function loadTuned() {
+    try { const r = localStorage.getItem(TUNED_KEY); if (r) tunedNodes = JSON.parse(r) || {}; } catch (e) {}
+  }
+  function saveTuned() {
+    try { localStorage.setItem(TUNED_KEY, JSON.stringify(tunedNodes)); } catch (e) {}
+  }
+
   const desktop = document.getElementById("desktop");
   const iconLayer = document.getElementById("icon-layer");
   const inspector = document.getElementById("inspector");
@@ -216,25 +227,55 @@
   }
 
   // ---- 给每个节点分配稳定 id，并记录它所在的数组(便于删除) ----
-  function reindex(items) {
+  function reindex(items, parentFolder) {
     items.forEach((node) => {
       if (node.__id == null) node.__id = "n" + idSeq++;
       nodeById[node.__id] = node;
       if (node.slot) nodeBySlot[node.slot] = node;
       node.__parentArray = items;
+      node.__parentFolder = parentFolder || null;
       if (node.type === "folder") {
         node.children = node.children || [];
-        reindex(node.children);
+        reindex(node.children, node);
       }
     });
   }
 
   // 逐层揭示：带 hiddenUntil 的节点，要等到对应 slot 的记录被“看过”才出现
+  // 在“游玩模式”下这个节点是否应隐藏（不看 editMode）
+  function hiddenInPlay(node) {
+    // 需要用“调律台”单独还原这个文件后，它才出现
+    if (node.revealByTune) {
+      if (!tunedNodes[node.__id]) return true;
+    }
+    if (node.hiddenUntil) {
+      const pre = nodeBySlot[node.hiddenUntil];
+      if (!(pre && viewed[pre.__id])) return true;
+    }
+    return false;
+  }
   function isHidden(node) {
-    if (editMode) return false;            // 编辑模式下全部可见，方便作者改
-    if (!node.hiddenUntil) return false;
-    const pre = nodeBySlot[node.hiddenUntil];
-    return !(pre && viewed[pre.__id]);
+    if (editMode) return false;            // 编辑模式下全部可见（半透明显示，方便作者改）
+    return hiddenInPlay(node);
+  }
+
+  // 这个隐藏文件的“还原条件”：优先用文件自己的 memory；
+  // 没单独设置时，回退到所在文件夹的 memory（向后兼容旧数据）。
+  function tuneConditionOf(node) {
+    if (node.memory && Array.isArray(node.memory.cast) && node.memory.cast.length) return node.memory;
+    const f = node.__parentFolder;
+    if (f && f.memory && Array.isArray(f.memory.cast) && f.memory.cast.length) return f.memory;
+    return null;
+  }
+
+  // 文件夹里所有“可被调律台还原”的隐藏文件
+  function tuneTargetsIn(folder) {
+    if (!folder || folder.type !== "folder" || !Array.isArray(folder.children)) return [];
+    return folder.children.filter((c) => c && c.revealByTune);
+  }
+  // 文件夹是否有“可被调律台还原”的隐藏内容
+  function folderHasTuneTarget(node) {
+    return tuneTargetsIn(node).some((c) => !!tuneConditionOf(c));
   }
 
   // ---- 系统信息 ----
@@ -285,6 +326,8 @@
     const el = document.createElement("div");
     el.className = "icon";
     if (selected === node) el.classList.add("selected");
+    // 编辑模式下，游玩时会被隐藏的文件半透明显示，提示作者“这个玩家暂时看不到”
+    if (editMode && hiddenInPlay(node)) el.classList.add("hidden-stub");
     node.__iconEl = el;
 
     let glyph;
@@ -346,6 +389,7 @@
     if (node.locked && !unlocked[node.__id]) { openLockDialog(node); return; }
 
     if (node.type === "notes") { openNotesApp(node); return; }
+    if (node.type === "tuner") { openTunerApp(node); return; }
 
     if (node.type === "txt" || node.type === "img") markViewed(node);
 
@@ -983,31 +1027,31 @@
     return step;
   }
 
-  function openMemoryLock(node) {
-    const mem = node.memory || {};
-    const cast = (mem.cast || []).slice();
-    const tuning = mem.tuning || {};
+  // 校验玩家在“推子台”上摆出的 active 是否还原了某段记忆 mem
+  function memoryMatches(active, mem) {
+    const cast = (mem && mem.cast) || [];
+    const tuning = (mem && mem.tuning) || {};
     const allCodes = (DESKTOP.roster || []).map((r) => r && r.code).filter(Boolean);
+    const presentCount = allCodes.filter((c) => active[c] && active[c].present).length;
+    const sameCast = presentCount === cast.length &&
+      cast.every((c) => active[c] && active[c].present);
+    if (!sameCast) return { ok: false, reason: "cast" };
+    const allTuned = cast.every((c) => {
+      const t = tuning[c] || {};
+      const target = t.value != null ? t.value : 0.5;
+      const tol = t.tol != null ? t.tol : 0.1;
+      return Math.abs(((active[c] && active[c].value) || 0) - target) <= tol;
+    });
+    return { ok: allTuned, reason: allTuned ? "" : "tune" };
+  }
 
-    const wrap = document.createElement("div");
-    wrap.className = "lock-body memory-lock";
-
-    const icon = document.createElement("div");
-    icon.className = "lock-icon";
-    icon.textContent = "♪";
-    const hint = document.createElement("div");
-    hint.className = "hint";
-    hint.textContent = mem.prompt ||
-      "织把这段记忆谱成了曲子。点亮当时在场的人（乐器），把每个人的情绪调到对的位置，我才放得出来。";
-    wrap.appendChild(icon);
-    wrap.appendChild(hint);
-
-    // 每个声纹一根推子，初始都显示：code -> { value, present }
+  // 复用的“推子台”：六根竖推子（在场勾选 + 心率滑块 + 循环试听）。
+  // 记忆锁和调律台 App 都用它。onChange 在玩家有任何改动时回调（用来清提示）。
+  function buildMemoryFaders(onChange) {
+    const allCodes = (DESKTOP.roster || []).map((r) => r && r.code).filter(Boolean);
     const active = {};
     allCodes.forEach((code) => { active[code] = { value: 0.5, present: false }; });
 
-    // 勾“在场”后，按心率循环播放该乐器；心率随滑块实时变（下一轮生效）。
-    // 心率为 0（静默）时仍每 0.7s 复查一次，方便玩家拉上来后自动恢复跳动。
     const loops = {}; // code -> timer id
     function loopCycle(code) {
       if (!active[code] || !active[code].present) return;
@@ -1018,10 +1062,6 @@
     function startLoop(code) { stopLoop(code); loopCycle(code); }
     function stopLoop(code) { if (loops[code]) { clearTimeout(loops[code]); delete loops[code]; } }
     function stopAllLoops() { Object.keys(loops).forEach(stopLoop); }
-
-    const rowsTitle = document.createElement("div");
-    rowsTitle.className = "mem-section";
-    rowsTitle.textContent = "勾上当时在场的人，把每个人的心率滑到位（越往上心率越快；滑到最底＝心率0，人已不在跳动）";
 
     const fadersWrap = document.createElement("div");
     fadersWrap.className = "mem-faders";
@@ -1045,7 +1085,7 @@
         const v = Number(slider.value) / 100;
         active[code].value = v;
         emo.textContent = hrText(v);
-        err.textContent = "";
+        if (onChange) onChange();
       });
       // 没勾在场时，拖动松手给一次试听；勾了在场则靠循环播放，不再叠加一次性
       slider.addEventListener("change", () => {
@@ -1062,18 +1102,18 @@
       cb.addEventListener("change", () => {
         active[code].present = cb.checked;
         col.classList.toggle("on", cb.checked);
-        err.textContent = "";
+        if (onChange) onChange();
         if (cb.checked) startLoop(code); else stopLoop(code);
       });
       presentWrap.appendChild(cb);
       presentWrap.appendChild(cbtxt);
 
-      // 只显示乐器名——“哪件乐器对应谁”要玩家自己从剧情里推
+      // 调律台只显示“声纹”，不显示乐器（音色仍按乐器播放）
       const lab = document.createElement("div");
       lab.className = "mem-fader-label";
       const ins = document.createElement("div");
       ins.className = "mem-inst-main";
-      ins.textContent = INSTRUMENT_LABEL[inst] || inst;
+      ins.textContent = code;
       lab.appendChild(ins);
 
       col.appendChild(emo);
@@ -1083,33 +1123,167 @@
       fadersWrap.appendChild(col);
     });
 
+    return { fadersWrap: fadersWrap, active: active, allCodes: allCodes, stopAllLoops: stopAllLoops };
+  }
+
+  function openMemoryLock(node) {
+    const mem = node.memory || {};
+
+    const wrap = document.createElement("div");
+    wrap.className = "lock-body memory-lock";
+
+    const icon = document.createElement("div");
+    icon.className = "lock-icon";
+    icon.textContent = "♪";
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = mem.prompt ||
+      "织把这段记忆谱成了曲子。点亮当时在场的人（乐器），把每个人的情绪调到对的位置，我才放得出来。";
+    wrap.appendChild(icon);
+    wrap.appendChild(hint);
+
+    const rowsTitle = document.createElement("div");
+    rowsTitle.className = "mem-section";
+    rowsTitle.textContent = "勾上当时在场的人，把每个人的心率滑到位（越往上心率越快；滑到最底＝心率0，人已不在跳动）";
+
+    const err = document.createElement("div");
+    err.className = "lock-error";
+    const faders = buildMemoryFaders(() => { err.textContent = ""; });
+
     wrap.appendChild(rowsTitle);
-    wrap.appendChild(fadersWrap);
+    wrap.appendChild(faders.fadersWrap);
 
     const btn = document.createElement("button");
     btn.className = "lock-btn";
     btn.textContent = "♫ 还原这段记忆";
-    const err = document.createElement("div");
-    err.className = "lock-error";
     wrap.appendChild(btn);
     wrap.appendChild(err);
 
-    const win = createWindow(node, wrap, { lockDialog: true, onClose: stopAllLoops });
+    const win = createWindow(node, wrap, { lockDialog: true, onClose: faders.stopAllLoops });
     win.style.width = "560px"; // 六根竖推子横排，覆盖锁框默认 300px
 
     btn.addEventListener("click", () => {
-      const chosen = allCodes.filter((c) => active[c].present);
-      const sameCast = chosen.length === cast.length && cast.every((c) => active[c].present);
-      if (!sameCast) { err.textContent = "记忆依旧模糊。在场的人不对。"; return; }
-      const allTuned = cast.every((c) => {
-        const t = tuning[c] || {};
-        const target = t.value != null ? t.value : 0.5;
-        const tol = t.tol != null ? t.tol : 0.1;
-        return Math.abs((active[c].value || 0) - target) <= tol;
+      const res = memoryMatches(faders.active, mem);
+      if (res.ok) { faders.stopAllLoops(); doUnlock(node, win); }
+      else err.textContent = res.reason === "cast"
+        ? "记忆依旧模糊。在场的人不对。"
+        : "记忆依旧模糊。有人的心率没对上。";
+    });
+  }
+
+  /* ===================================================================
+   *  调律台 App（桌面图标 type:"tuner"）
+   *  选一个“当前已打开的房间(文件夹)”，把这段记忆还原出来，
+   *  该房间里 revealByTune 的隐藏文件就会浮现。
+   * =================================================================== */
+  function openTunerApp(node) {
+    const wrap = document.createElement("div");
+    wrap.className = "lock-body memory-lock tuner-app";
+
+    const icon = document.createElement("div");
+    icon.className = "lock-icon";
+    icon.textContent = "♪";
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.textContent = node.appIntro ||
+      "调律台。先在下面选一个你正打开着的房间，再勾上当时在场的人、把心率调到位，点“还原”。对了，这个房间里藏着的记录就会显出来。";
+    wrap.appendChild(icon);
+    wrap.appendChild(hint);
+
+    // 房间选择（当前打开的文件夹窗口）
+    const pickRow = document.createElement("div");
+    pickRow.className = "tuner-pick";
+    const pickLab = document.createElement("span");
+    pickLab.textContent = "房间：";
+    const sel = document.createElement("select");
+    sel.className = "tuner-room-select";
+    pickRow.appendChild(pickLab);
+    pickRow.appendChild(sel);
+    wrap.appendChild(pickRow);
+
+    const msg = document.createElement("div");
+    msg.className = "lock-error";
+    function setMsg(text, ok) {
+      msg.className = "lock-error" + (ok ? " tuner-ok" : "");
+      msg.textContent = text;
+    }
+
+    function openFolders() {
+      return Object.keys(openWindows)
+        .map((id) => openWindows[id].node)
+        .filter((n) => n && n.type === "folder");
+    }
+    function rebuildOptions() {
+      const prev = sel.value;
+      sel.innerHTML = "";
+      const folders = openFolders();
+      if (!folders.length) {
+        const o = document.createElement("option");
+        o.value = ""; o.textContent = "（先打开一个房间）";
+        sel.appendChild(o);
+        return;
+      }
+      const ph = document.createElement("option");
+      ph.value = ""; ph.textContent = "选一个房间…";
+      sel.appendChild(ph);
+      folders.forEach((f) => {
+        const o = document.createElement("option");
+        o.value = f.__id;
+        o.textContent = displayName(f);
+        sel.appendChild(o);
       });
-      if (!allTuned) { err.textContent = "记忆依旧模糊。有人的情绪没对上。"; return; }
-      stopAllLoops();
-      doUnlock(node, win);
+      if (folders.some((f) => f.__id === prev)) sel.value = prev;
+    }
+    sel.addEventListener("mousedown", rebuildOptions);
+    sel.addEventListener("change", () => setMsg("", false));
+    rebuildOptions();
+
+    const rowsTitle = document.createElement("div");
+    rowsTitle.className = "mem-section";
+    rowsTitle.textContent = "勾上当时在场的人，把每个人的心率滑到位（越往上心率越快；滑到最底＝心率0，人已不在跳动）";
+
+    const faders = buildMemoryFaders(() => setMsg("", false));
+
+    wrap.appendChild(rowsTitle);
+    wrap.appendChild(faders.fadersWrap);
+
+    const btn = document.createElement("button");
+    btn.className = "lock-btn";
+    btn.textContent = "♫ 还原这段记忆";
+    wrap.appendChild(btn);
+    wrap.appendChild(msg);
+
+    const win = createWindow(node, wrap, { notes: true, onClose: faders.stopAllLoops });
+    win.style.width = "560px";
+    win.style.height = "auto";
+
+    btn.addEventListener("click", () => {
+      const folder = nodeById[sel.value];
+      if (!folder || folder.type !== "folder") { setMsg("先在上面选一个你打开着的房间。", false); return; }
+      const targets = tuneTargetsIn(folder);
+      // 逐个隐藏文件，按它“自己的”还原条件比对；对上一个就显出来一个
+      let configured = 0;
+      let revealed = 0;
+      let castClose = false; // 有没有“人对了，只是心率没对”的情况
+      targets.forEach((c) => {
+        const mem = tuneConditionOf(c);
+        if (!mem) return;
+        configured++;
+        if (tunedNodes[c.__id]) return; // 已经还原过的跳过
+        const res = memoryMatches(faders.active, mem);
+        if (res.ok) { tunedNodes[c.__id] = true; revealed++; }
+        else if (res.reason === "tune") castClose = true;
+      });
+      if (!configured) { setMsg("这个房间里，没有设好还原条件的隐藏文件。", false); return; }
+      if (revealed > 0) {
+        saveTuned();
+        refreshOpenFolders();
+        setMsg("还原成功。浮出了 " + revealed + " 条新记录。", true);
+      } else {
+        setMsg(castClose
+          ? "记忆依旧模糊。在场的人对了，但有人的心率没对上。"
+          : "记忆依旧模糊。在场的人或心率不对。", false);
+      }
     });
   }
 
@@ -1300,6 +1474,7 @@
   }
 
   function buildInspector(node) {
+    reindex(DESKTOP.items); // 保证 __parentFolder 等关系最新（新加的文件也能正确提示）
     inspector.innerHTML = "";
     inspector.classList.add("shown");
 
@@ -1320,6 +1495,51 @@
         (ICON_GLYPH[node.type] || "") + " " + node.name;
     });
     inspector.appendChild(field("名称", nameInp));
+
+    // “调律台还原后才出现”——隐藏文件开关 + 这个文件【自己的】还原条件
+    function revealByTuneField() {
+      const w = document.createElement("div");
+      w.className = "insp-field";
+      const line = document.createElement("label");
+      line.className = "insp-check";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!node.revealByTune;
+      const sp = document.createElement("span");
+      sp.textContent = "🎵 用调律台还原后才出现（隐藏文件）";
+      line.appendChild(cb);
+      line.appendChild(sp);
+      w.appendChild(line);
+
+      // 本文件自己的还原条件（不再和所在文件夹绑定）
+      const condBox = document.createElement("div");
+      function renderCond() {
+        condBox.innerHTML = "";
+        if (!cb.checked) return;
+        const hint = document.createElement("div");
+        hint.style.fontSize = "12px";
+        hint.style.marginTop = "4px";
+        hint.style.lineHeight = "1.5";
+        hint.style.color = "var(--text-dim)";
+        hint.textContent = "下面是【这个文件】单独的还原条件：玩家在调律台里选中所在房间、" +
+          "把这些声纹勾上并把心率调到位，才会显出这个文件。同一房间里的不同文件可以设不同条件。";
+        condBox.appendChild(hint);
+        node.memory = node.memory || { prompt: "", cast: [], tuning: {} };
+        renderMemoryEditor(condBox);  // 编辑的是 node.memory（本文件自己的）
+      }
+      cb.addEventListener("change", () => {
+        if (cb.checked) {
+          node.revealByTune = true;
+          node.memory = node.memory || { prompt: "", cast: [], tuning: {} };
+        } else {
+          delete node.revealByTune;
+        }
+        renderCond();
+      });
+      renderCond();
+      w.appendChild(condBox);
+      return w;
+    }
 
     // 类型专属字段
     if (node.type === "txt") {
@@ -1410,6 +1630,7 @@
 
       inspector.appendChild(field("说话人（自动插入前缀）", speakerTool));
       inspector.appendChild(field("文本内容（每行一段）", ta));
+      inspector.appendChild(revealByTuneField());
     } else if (node.type === "img") {
       const srcInp = document.createElement("input");
       srcInp.type = "text";
@@ -1427,6 +1648,7 @@
       capInp.value = node.caption || "";
       capInp.addEventListener("input", () => { node.caption = capInp.value; });
       inspector.appendChild(field("图片说明", capInp));
+      inspector.appendChild(revealByTuneField());
     } else if (node.type === "folder") {
       const note = document.createElement("div");
       note.className = "insp-field";
@@ -1435,6 +1657,43 @@
       note.textContent = "双击打开这个文件夹后，用上方“＋”按钮往里加东西。当前有 " +
         (node.children ? node.children.length : 0) + " 项。";
       inspector.appendChild(note);
+
+      // 说明：还原条件现在配在【每个隐藏文件】上（见各文件的“用调律台还原后才出现”）。
+      // 文件夹这里只是一个【可选的默认条件】：房间里没单独设条件的隐藏文件，会回退用它。
+      const tuneLine = document.createElement("label");
+      tuneLine.className = "insp-check";
+      const tuneChk = document.createElement("input");
+      tuneChk.type = "checkbox";
+      tuneChk.checked = !!node.memory;
+      const tuneSpan = document.createElement("span");
+      tuneSpan.textContent = "🎵 本房间的默认还原条件（可选）";
+      tuneLine.appendChild(tuneChk);
+      tuneLine.appendChild(tuneSpan);
+      const tuneFieldWrap = document.createElement("div");
+      tuneFieldWrap.className = "insp-field";
+      tuneFieldWrap.appendChild(tuneLine);
+      inspector.appendChild(tuneFieldWrap);
+
+      const tuneBox = document.createElement("div");
+      inspector.appendChild(tuneBox);
+      function renderFolderTune() {
+        tuneBox.innerHTML = "";
+        if (!node.memory) return;
+        const h = document.createElement("div");
+        h.className = "insp-field";
+        h.style.fontSize = "12px";
+        h.style.color = "var(--text-dim)";
+        h.textContent = "可选：房间里那些没单独设置还原条件的隐藏文件，会默认用下面这套条件。" +
+          "想让每个文件用不同的调律，请直接在各个文件上设置。";
+        tuneBox.appendChild(h);
+        renderMemoryEditor(tuneBox);
+      }
+      tuneChk.addEventListener("change", () => {
+        if (tuneChk.checked) node.memory = node.memory || { cast: [], tuning: {} };
+        else delete node.memory;
+        renderFolderTune();
+      });
+      renderFolderTune();
     }
 
     // 上锁
@@ -1728,6 +1987,7 @@
       localStorage.removeItem(VIEWED_KEY);
       localStorage.removeItem(FILENAME_KEY);
       localStorage.removeItem(NOTES_KEY);
+      localStorage.removeItem(TUNED_KEY);
     } catch (e) {}
     location.reload();
   }
@@ -1762,6 +2022,7 @@
   loadNotes();                                             // 玩家备注（与作者草稿分开存）
   loadPlayerNames();                                       // 玩家给日志起的名字
   loadViewed();                                            // 玩家看过哪些记录
+  loadTuned();                                             // 玩家用调律台还原过的房间
   ORIGINAL_FILE_SIG = JSON.stringify(cleanClone(DESKTOP)); // 先记下文件版本指纹
   const hadDraft = loadDraft();                            // 有草稿且文件没被改过 -> 恢复
   reindex(DESKTOP.items);
